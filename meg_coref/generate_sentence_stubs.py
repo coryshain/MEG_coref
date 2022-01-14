@@ -2,35 +2,34 @@ import numpy as np
 import pandas as pd
 
 # 150 ethnically-balanced female and male names
-names = pd.read_csv('output/MEG/stim/names_sorted.csv')
-names = names.rename(lambda x: 'Name' if x == "Child's First Name" else x, axis=1)
+names = pd.read_csv('stim_gen/names_newman.csv')
 
-female = names[names.Gender == 'FEMALE'][['Name', 'Gender', 'Ethnicity']].reset_index(drop=True)
-male = names[names.Gender == 'MALE'][['Name', 'Gender', 'Ethnicity']].reset_index(drop=True)
+female = names[names.Gender == 'FEMALE'][['Name', 'Gender']].reset_index(drop=True)
+male = names[names.Gender == 'MALE'][['Name', 'Gender']].reset_index(drop=True)
 
 # 15 predicates from 3 equal groups
 owns_a = [
-    'owns a dog',
-    'owns a farm',
-    'owns a pool',
-    'owns a restaurant',
-    'owns a truck'
+    'owns a pub',
+    'owns a salamander',
+    'owns a treadmill',
+    'owns a bagpipe',
+    'owns a limousine',
 ]
 
 is_a = [
-    'is an optometrist',
-    'is a teacher',
-    'is a chef',
-    'is a journalist',
-    'is a jeweler'
+    'is a retiree',
+    'is an actor',
+    'is a paralegal',
+    'is an ophthalmologist',
+    'is a bellhop',
 ]
 
 likes_to = [
-    'likes to meditate',
-    'likes to read',
-    'likes to sing',
+    'likes to crochet',
+    'likes to flirt',
     'likes to sail',
-    'likes to entertain',
+    'likes to paint',
+    'likes to read',
 ]
 
 predicates = owns_a + is_a + likes_to
@@ -42,7 +41,7 @@ predicates = pd.DataFrame({
 })
 
 # 15 implicit causality verbs in 3 bins
-ic_src = pd.read_csv('output/MEG/stim/ic.csv')
+ic_src = pd.read_csv('stim_src/ic.csv')
 
 # Randomly assign predicates to names such that no pairs contain the same predicate
 # and all predicates are equally represented
@@ -66,17 +65,22 @@ male = pd.concat([male, predicates_male], axis=1)
 order = np.concatenate([np.zeros(75), np.ones(75)]).astype(bool)
 np.random.shuffle(order)
 
+ix = np.concatenate([
+    female.index[order].to_numpy(),
+    female.index[~order].to_numpy(),
+], axis=0)
+
 f_first = pd.concat([
-    female[order].rename(lambda x: x + '1', axis=1).reset_index(drop=True),
-    male[order].rename(lambda x: x + '2', axis=1).reset_index(drop=True),
+    female[order].rename(lambda x: x + '1', axis=1),
+    male[order].rename(lambda x: x + '2', axis=1),
 ], axis=1)
 
 m_first = pd.concat([
-    male[~order].rename(lambda x: x + '1', axis=1).reset_index(drop=True),
-    female[~order].rename(lambda x: x + '2', axis=1).reset_index(drop=True),
+    male[~order].rename(lambda x: x + '1', axis=1),
+    female[~order].rename(lambda x: x + '2', axis=1),
 ], axis=1)
 
-stubs = pd.concat([f_first.reset_index(drop=True), m_first.reset_index(drop=True)], axis=0).reset_index(drop=True)
+stubs = pd.concat([f_first, m_first], axis=0).sort_index()
 
 # Randomly decide whether to reverse the order of names in S1, S2
 reversed = np.concatenate([np.zeros(75), np.ones(75)]).astype(bool)
@@ -128,9 +132,9 @@ stubs['Continuation'] = 'CONT'
 
 # Piece together sentence stubs
 stubs['Item'] = stubs.apply(
-    lambda x: '%s. %s %s. %s %s %s %s because %s %s' % (x.S1, x.S2Subj, x.Filler, x.Name1, x.Verb, x.Name2, x.AdvP, x.ICPro, x.Continuation),
+    lambda x: '%s. %s %s. %s %s.CONJ %s %s because %s %s' % (x.S1, x.S2Subj, x.Filler, x.Name1, x.Verb, x.Name2, x.AdvP, x.ICPro, x.Continuation),
     axis=1
 )
 
 # Save output
-stubs.to_csv('output/MEG/stim/items.csv', index=False)
+stubs.to_csv('stim_gen/items.csv', index=False)

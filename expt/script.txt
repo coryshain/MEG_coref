@@ -1,0 +1,35 @@
+Before participant arrives
+
+- Check that stimulus scripts work
+- Log into scanning computer and start Neuromag software (bottom left, then Aquisition)
+- Open selection and tuning windows
+- Enter experiment and subject metadata
+- Check and fix all sensors (press "GO!" to start sensing)
+- Prepare head position electrodes
+- Turn on projector
+
+
+After participant arrives
+
+- Welcome and thank participant.
+- Check for any metal clothing or jewelry. Ask about metal implants, dental apparatus, metal in bra. Have them change into scrub if needed.
+- Sanitize glasses and stylus
+- Don glasses and attach head position electrodes (3 on temple, 2 behind each ear at ear canal level)
+- Calibrate head position data
+- Sanitize glasses and stylus
+
+This session has two experiments.
+
+The first experiment is about 10 minutes long. You'll be presented with a sequence of words shown one after the other in the center of the display. Some of the words will be familiar, and some will not. At the end of each word sequence, a hand-shaped icon will appear, indicating that you should press a button (any button) on your button box. Your only job is to watch the words and press any button when the hand icon appears.
+
+The second exeriment is about an hour and a half long. You'll hear several 4-6 minute audio recordings.  Recordings may be repeated. After many of the recordings, there will be comprehension questions. Do the best you can, but just make your best guess if you don't know the answer, don't stress. After each set of story plus questions, there will be a screen indicating that you can take a short rest. Feel free to relax, close your eyes, move your arms if you need to, but stay in the scanner. When you're done resting, you can move on by pressing any button on the button box.
+
+While listening to the recordings, do your best to look at the cross in the middle of the screen, blink when you need to.
+
+
+After participant leaves
+
+- End session, ensure that files save correctly, shut off acquisition software and log out of scanning computer
+- Clean and return electrodes
+- Turn off projector, video monitor, intercom
+- Shut door

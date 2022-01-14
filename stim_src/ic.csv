@@ -1,0 +1,16 @@
+Verb,NPBias,NPBiasCat,GenderBias
+apologize_to,93,NP1,6
+call,82,NP1,4
+irritate,81,NP1,10
+inspire,78,NP1,4
+worry,76,NP1,7
+interrupt,3,neutral,-6
+encourage,-12,neutral,6
+greet,-8,neutral,-16
+confide_in,5,neutral,-7
+surprise,10,neutral,-6
+congratulate,-94,NP2,3
+envy,-94,NP2,-5
+admire,-92,NP2,-1
+pity,-83,NP2,10
+notice,-92,NP2,9
