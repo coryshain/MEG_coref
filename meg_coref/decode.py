@@ -1,5 +1,3 @@
-import sys
-import re
 import os
 import shutil
 import pickle
@@ -19,8 +17,6 @@ from .util import *
 from .classifiers import *
 from .nn import DNN
 
-# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-
 channel_matcher = re.compile('(MEG\d\d\d\d)')
 
 MAX_N_RESAMP = 100
@@ -35,12 +31,15 @@ if __name__ == '__main__':
     ''')
     argparser.add_argument('config', help='Path to config file containing decoding settings.')
     argparser.add_argument('-f', '--force_reprocess', action='store_true', help='Force data reprocessing, even if a data cache exists.')
+    argparser.add_argument('-c', '--cpu_only', action='store_true', help='Force CPU implementation if GPU available.')
     args = argparser.parse_args()
 
     config_path = args.config
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=Loader)
     force_reprocess = args.force_reprocess
+    if args.cpu_only:
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
     paths = config['paths']
     label_field = config.get('label_field', 'attr_cat')
@@ -211,7 +210,7 @@ if __name__ == '__main__':
                         nlab = nlabperfold * (nfolds - 1)
                     else:
                         nlab = None
-                    mean_by_lab = dict()
+                    mean_by_lab = {}
                     stderr('    Processing data\n')
                     for lab in X_train_src:
                         _X = X_train_src[lab]
@@ -339,14 +338,17 @@ if __name__ == '__main__':
                         elif clstype == 'DNN':
                             kwargs = {
                                 'layer_type': 'cnn',
+                                'learning_rate': 0.0001,
                                 'n_units': 256,
                                 'n_layers': 1,
                                 'kernel_width': 25,
                                 'cnn_activation': 'tanh',
                                 'reg_scale': None,
+                                'dropout': None,
                                 'use_glove': use_glove,
                                 'n_outputs': _nclass,
-                                'layer_normalize': True,
+                                'layer_normalize': False,
+                                'batch_normalize': True,
                             }
                         else:
                             raise ValueError('Unrecognized clstype %s' % clstype)
