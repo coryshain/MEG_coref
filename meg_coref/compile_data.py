@@ -68,8 +68,13 @@ if __name__ == '__main__':
                         .get_data()
                 if downsample_by > 1:
                     meta['downsample_by'] = downsample_by
-                    num = _data.shape[1] // downsample_by
-                    _data = resample(_data, num, axis=1)
+                    b = _data.shape[0]
+                    t = _data.shape[1]
+                    trim = t % downsample_by
+                    _t = t // downsample_by
+                    _data = _data[:, trim:].reshape((b, _t, downsample_by)).mean(axis=-1)
+                    # num = _data.shape[1] // downsample_by
+                    # _data = resample(_data, num, axis=1)
                 raster_data.append(_data)
                 if _labels is None:
                     _labels = raster['raster_labels']

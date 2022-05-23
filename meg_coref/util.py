@@ -7,18 +7,18 @@ def stderr(x):
     sys.stderr.flush()
 
 
-def partition_cv(data, labels, nfolds, filter_mask=None):
+def partition_cv(data, labels, nfolds, eval_filter_mask=None):
     label_keys = labels[:,0]
     labels_out = {}
 
-    if filter_mask is not None:
-        supp_mask = ~filter_mask
+    if eval_filter_mask is not None:
+        supp_mask = ~eval_filter_mask
         data_supp = data[supp_mask]
         label_keys_supp = label_keys[supp_mask]
         labels_supp = labels[supp_mask]
-        data = data[filter_mask]
-        label_keys = label_keys[filter_mask]
-        labels = labels[filter_mask]
+        data = data[eval_filter_mask]
+        label_keys = label_keys[eval_filter_mask]
+        labels = labels[eval_filter_mask]
 
         p = np.random.permutation(np.arange(len(label_keys_supp)))
         data_supp = data_supp[p]
@@ -61,3 +61,8 @@ def compute_filter_mask(y, filters):
         sel &= np.isin(y[filter], vals)
 
     return sel
+
+
+def normalize(x, axis=-1):
+    n = np.linalg.norm(x, axis=axis, keepdims=True)
+    return x / n
