@@ -58,7 +58,20 @@ def compute_filter_mask(y, filters):
         break
     for filter in filters:
         vals = filters[filter]
-        sel &= np.isin(y[filter], vals)
+        if vals.startswith('<='):
+            sel &= y[filter] <= float(vals[2:].strip())
+        elif vals.startswith('<'):
+            sel &= y[filter] < float(vals[1:].strip())
+        elif vals.startswith('>='):
+            sel &= y[filter] >= float(vals[2:].strip())
+        elif vals.startswith('>'):
+            sel &= y[filter] > float(vals[1:].strip())
+        elif vals.startswith('=='):
+            sel &= y[filter] == float(vals[2:].strip())
+        elif vals.startswith('='):
+            sel &= y[filter] == float(vals[1:].strip())
+        else:
+            sel &= np.isin(y[filter], vals)
 
     return sel
 

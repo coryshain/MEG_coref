@@ -1,6 +1,8 @@
 import math
+import pickle
 import numpy as np
 from scipy.stats import zscore
+from sklearn.metrics import accuracy_score, f1_score
 import tensorflow as tf
 import tensorflow_addons as tfa
 
@@ -8,6 +10,90 @@ from .util import normalize
 
 for x in tf.config.list_physical_devices('GPU'):
     tf.config.experimental.set_memory_growth(x, True)
+
+
+def dnn_classify(model, X, argmax=False, return_prob=False, comparison_set=None, **kwargs):
+    if model.use_glove:
+        assert comparison_set is not None, 'Classification using GloVe requires a comparison set'
+
+    outputs = []
+    for _X in X:
+        _outputs = model.predict_on_batch(_X, **kwargs)
+        if model.contrastive_loss_weight:
+            _outputs, _ = _outputs
+        outputs.append(_outputs)
+    outputs = np.concatenate(outputs, axis=0)
+
+    if model.use_glove:
+        outputs = normalize(outputs, axis=-1)
+        classes = np.array(sorted(list(comparison_set.keys())))
+        glove_targ = np.stack([comparison_set[x] for x in classes], axis=1)
+        glove_targ = normalize(glove_targ, axis=0)
+
+        outputs = np.dot(outputs, glove_targ)
+        if argmax:
+            ix = np.argmax(outputs, axis=-1)
+            pred = classes[ix]
+        else:
+            pred = outputs
+        if return_prob:
+            probs = np.max(outputs, axis=-1)
+        else:
+            prob = None
+    else:
+        if argmax:
+            pred = np.argmax(outputs, axis=-1)
+        else:
+            pred = outputs
+        pred = np.vectorize(lambda x: model.ix2lab.get(x, '<<OOV>>'))(pred)
+
+    return pred
+
+
+class ModelEval(tf.keras.callbacks.Callback):
+    def __init__(
+            self,
+            save_freq=10,
+            save_path=None,
+            eval_data_generator=None,
+            ylab=None,
+            comparison_set=None,
+            results_dict=None,
+            results_path=None
+    ):
+        self.save_freq = save_freq
+        self.save_path = save_path
+        self.eval_data_generator = eval_data_generator
+        self.ylab = ylab
+        self.comparison_set = comparison_set
+        self.results_dict = results_dict
+        self.results_path = results_path
+
+    def on_epoch_end(self, epoch, logs={}):
+        if (epoch + 1) % self.save_freq == 0:
+            if self.save_path:
+                self.model.save(self.save_path)
+
+            if self.eval_data_generator is not None:
+                ylab = self.ylab
+                if self.results_dict is None:
+                    results_dict = {}
+                else:
+                    results_dict = self.results_dict
+                y_pred = self.model.classify(self.eval_data_generator, comparison_set=self.comparison_set)
+                T = y_pred.shape[1]
+
+                results_acc = np.zeros(T)
+                results_f1 = np.zeros(T)
+                for t in range(T):
+                    acc = accuracy_score(ylab, y_pred[:, t])
+                    f1 = f1_score(ylab, y_pred[:, t], average='macro')
+                    results_acc[t] = acc
+                    results_f1[t] = f1
+                results_dict['acc'] = results_acc
+                results_dict['f1'] = results_f1
+                with open(self.results_path, 'wb') as f:
+                    pickle.dump(results_dict, f)
 
 
 class RasterData(tf.keras.utils.Sequence):
@@ -50,7 +136,6 @@ class RasterData(tf.keras.utils.Sequence):
                 out = (batch_x, (batch_y, contrastive_targets))
             else:
                 out = (batch_x, batch_y)
-
 
         return out
 
@@ -199,7 +284,7 @@ class SensorFilter(tf.keras.layers.Layer):
 
         return x
 
-
+@tf.keras.utils.register_keras_serializable()
 class DNN(tf.keras.Model):
     def __init__(
             self,
@@ -212,6 +297,7 @@ class DNN(tf.keras.Model):
             cnn_activation='gelu',
             n_outputs=300,
             dropout=None,
+            input_dropout=0.5,
             reg_scale=1.,
             sensor_filter_scale=None,
             use_glove=False,
@@ -226,7 +312,8 @@ class DNN(tf.keras.Model):
             **kwargs
     ):
         super(DNN, self).__init__(**kwargs)
-        self.lab2ix = lab_map
+        self.lab_map = lab_map
+        self.lab2ix = self.lab_map
         if lab_map:
             self.ix2lab = {self.lab2ix[y]: y for y in self.lab2ix}
         else:
@@ -241,6 +328,7 @@ class DNN(tf.keras.Model):
         self.reg_scale = reg_scale
         self.sensor_filter_scale = sensor_filter_scale
         self.dropout = dropout
+        self.input_dropout = input_dropout
         self.use_glove = use_glove
         self.continuous_outputs = continuous_outputs
         self.use_resnet = use_resnet
@@ -282,14 +370,12 @@ class DNN(tf.keras.Model):
             kernel_regularizer = None
 
         layers = []
-        # if self.batch_normalize:
-        #     layers.append(tf.keras.layers.BatchNormalization())
-        # if self.layer_normalize:
-        #     layers.append(tf.keras.layers.LayerNormalization())
         if self.sensor_filter_scale:
             layers.append(SensorFilter(rate=self.sensor_filter_scale))
-        if dropout:
-            layers.append(tf.keras.layers.Dropout(dropout))
+        if self.input_dropout:
+            layers.append(tf.keras.layers.Dropout(self.input_dropout))
+        if self.use_locally_connected:
+            layers.append(tf.keras.layers.ZeroPadding1D(padding=(kernel_width - 1, 0)))
         for _ in range(self.n_layers):
             if layer_type == 'cnn':
                 if self.use_resnet:
@@ -367,7 +453,6 @@ class DNN(tf.keras.Model):
                     layers.append(L2LayerNormalization())
                 if dropout:
                     layers.append(tf.keras.layers.Dropout(dropout))
-            layers.append(tf.keras.layers.ZeroPadding1D(padding=(kernel_width - 1, 0)))
         if project:
             layers.append(
                 tf.keras.layers.Dense(n_outputs, kernel_regularizer=kernel_regularizer, activation=output_activation)
@@ -394,10 +479,11 @@ class DNN(tf.keras.Model):
             loss_weights=loss_weights
         )
 
-        print(self._layers)
+        # self.classify = lambda *args, **kwargs: dnn_classify(self, *args, **kwargs)
 
     def call(self, inputs, training=False):
         x = inputs
+
         for layer in self._layers:
             x = layer(x, training=training)
 
@@ -413,7 +499,7 @@ class DNN(tf.keras.Model):
 
         return self
 
-    def classify(self, X, argmax=False, return_prob=False, comparison_set=None, **kwargs):
+    def classify(self, X, argmax=True, return_prob=False, comparison_set=None, **kwargs):
         if self.use_glove:
             assert comparison_set is not None, 'Classification using GloVe requires a comparison set'
 
@@ -449,3 +535,35 @@ class DNN(tf.keras.Model):
             pred = np.vectorize(lambda x: self.ix2lab.get(x, '<<OOV>>'))(pred)
 
         return pred
+
+    def get_config(self):
+        config = {
+            'lab_map': self.lab_map,
+            'learning_rate': self.learning_rate,
+            'layer_type': self.layer_type,
+            'n_layers': self.n_layers,
+            'n_units': self.n_units,
+            'kernel_width': self.kernel_width,
+            'cnn_activation': self.cnn_activation,
+            'n_outputs': self.n_outputs,
+            'dropout': self.dropout,
+            'input_dropout': self.input_dropout,
+            'reg_scale': self.reg_scale,
+            'sensor_filter_scale': self.sensor_filter_scale,
+            'use_glove': self.use_glove,
+            'continuous_outputs': self.continuous_outputs,
+            'use_resnet': self.use_resnet,
+            'use_locally_connected': self.use_locally_connected,
+            'project': self.project,
+            'contrastive_loss_weight': self.contrastive_loss_weight,
+            'batch_normalize': self.batch_normalize,
+            'layer_normalize': self.layer_normalize,
+            'l2_layer_normalize': self.l2_layer_normalize
+        }
+
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        out = cls(**config)
+        return out

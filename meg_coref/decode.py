@@ -85,6 +85,7 @@ if __name__ == '__main__':
     reg_scale = config.get('reg_scale', None)
     sensor_filter_scale = config.get('sensor_filter_scale', None)
     dropout = config.get('dropout', None)
+    input_dropout = config.get('input_dropout', None)
     use_resnet = config.get('use_resnet', False)
     use_locally_connected = config.get('use_locally_connected', False)
     batch_normalize = config.get('batch_normalize', False)
@@ -129,6 +130,10 @@ if __name__ == '__main__':
         meta = data_src['meta']
 
         _label_df = pd.DataFrame(_labels)
+        if 'labcount' not in _label_df.columns:
+            labs, ix, counts = np.unique(_label_df[label_field].values, return_inverse=True, return_counts=True)
+            counts = counts[ix]
+            _label_df['labcount'] = counts
         _filter_mask = compute_filter_mask(_label_df, filters)
         _eval_filter_mask = compute_filter_mask(_label_df, eval_filters)
         cols = [label_field]
@@ -415,6 +420,7 @@ if __name__ == '__main__':
                                 'reg_scale': reg_scale,
                                 'sensor_filter_scale': sensor_filter_scale,
                                 'dropout': dropout,
+                                'input_dropout': input_dropout,
                                 'use_glove': use_glove,
                                 'use_resnet': use_resnet,
                                 'use_locally_connected': use_locally_connected,
@@ -430,6 +436,7 @@ if __name__ == '__main__':
                             X_in = X_train[..., t]
                         else:
                             X_in = X_train
+
                         m = train(
                             X_in,
                             y_train,
