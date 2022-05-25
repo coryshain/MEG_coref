@@ -74,8 +74,8 @@ if __name__ == '__main__':
     results['f1'] = np.stack(results['f1'], axis=0)
 
     for score in results:
-        _results = results[score]
-        _chance = chance[score]
+        _results = results[score] * 100  # Place scores on 0-100 for readability
+        _chance = chance[score] * 100  # Place scores on 0-100 for readability
         ntime = _results.shape[1]
 
         mean = _results.mean(axis=0)
@@ -97,7 +97,7 @@ if __name__ == '__main__':
         plt.plot(x, mean)
         plt.xlabel('Time (s)')
         if score == 'acc':
-            plt.ylabel('Proportion Correct')
+            plt.ylabel('% Correct')
         elif score == 'f1':
             plt.ylabel('F1')
         else:

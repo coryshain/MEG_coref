@@ -1,4 +1,6 @@
 import sys
+import os
+import pickle
 import numpy as np
 
 
@@ -79,3 +81,25 @@ def compute_filter_mask(y, filters):
 def normalize(x, axis=-1):
     n = np.linalg.norm(x, axis=axis, keepdims=True)
     return x / n
+
+
+def compile_cv_ix(data, outdir, niter=1, nfolds=5, force_resample=False):
+    outdir = os.path.normpath(outdir)
+    for i in range(niter):
+        p = np.arange(len(data))
+        p = np.random.permutation(p)
+        p = np.array_split(p, nfolds, axis=0)
+        for j in range(nfolds):
+            train_ix = np.concatenate([_p for j, _p in enumerate(p) if i != j], axis=0)
+            val_ix = p[j]
+
+            fold_path = os.path.join(outdir, 'i%d' % (i+1), 'f%d' % (j+1))
+            if not os.path.exists(fold_path):
+                os.makedirs(fold_path)
+            train_ix_path = os.path.join(fold_path, 'train_ix.obj')
+            if force_resample or not os.path.exists(train_ix_path):
+                with open(train_ix_path, 'wb') as f:
+                    pickle.dump(train_ix, f)
+                val_ix_path = os.path.join(fold_path, 'val_ix.obj')
+                with open(val_ix_path, 'wb') as f:
+                    pickle.dump(val_ix, f)

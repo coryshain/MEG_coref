@@ -12,19 +12,200 @@ for x in tf.config.list_physical_devices('GPU'):
     tf.config.experimental.set_memory_growth(x, True)
 
 
-def dnn_classify(model, X, argmax=False, return_prob=False, comparison_set=None, **kwargs):
-    if model.use_glove:
+def get_dnn_model(
+        inputs,
+        layer_type='rnn',
+        n_layers=1,
+        n_units=16,
+        kernel_width=20,
+        cnn_activation='gelu',
+        n_outputs=300,
+        dropout=None,
+        input_dropout=0.5,
+        reg_scale=1.,
+        sensor_filter_scale=None,
+        use_glove=False,
+        use_resnet=False,
+        use_locally_connected=False,
+        project=True,
+        batch_normalize=False,
+        layer_normalize=False,
+        l2_layer_normalize=False,
+):
+    if use_glove:
+        output_activation = None
+    else:
+        output_activation = 'softmax'
+
+    if reg_scale:
+        kernel_regularizer = tf.keras.regularizers.L2(reg_scale)
+    else:
+        kernel_regularizer = None
+
+    layers = []
+    if sensor_filter_scale:
+        layers.append(SensorFilter(rate=sensor_filter_scale))
+    if input_dropout:
+        layers.append(tf.keras.layers.Dropout(input_dropout))
+    if use_locally_connected:
+        layers.append(tf.keras.layers.ZeroPadding1D(padding=(kernel_width - 1, 0)))
+    if use_resnet:
+        layers.append(
+            tf.keras.layers.Conv1D(
+                n_units,
+                kernel_width,
+                padding='causal',
+                kernel_regularizer=kernel_regularizer,
+                activation=cnn_activation
+            )
+        )
+        if batch_normalize:
+            layers.append(tf.keras.layers.BatchNormalization())
+        if layer_normalize:
+            layers.append(tf.keras.layers.LayerNormalization())
+        if l2_layer_normalize:
+            layers.append(L2LayerNormalization())
+        if dropout:
+            layers.append(tf.keras.layers.Dropout(dropout))
+    for _ in range(n_layers):
+        if layer_type == 'cnn':
+            if use_resnet:
+                layers.append(
+                    ResNetConv1DBlock(
+                        kernel_width,
+                        reg_scale=reg_scale,
+                        inner_activation=cnn_activation,
+                        activation=None,
+                        layer_normalize=layer_normalize,
+                        batch_normalize=batch_normalize
+                    )
+                )
+            else:
+                layers.append(
+                    tf.keras.layers.Conv1D(
+                        n_units,
+                        kernel_width,
+                        padding='causal',
+                        kernel_regularizer=kernel_regularizer,
+                        activation=cnn_activation
+                    )
+                )
+        elif layer_type == 'rnn':
+            layers.append(
+                tf.keras.layers.GRU(
+                    n_units,
+                    kernel_regularizer=kernel_regularizer,
+                    return_sequences=True
+                )
+            )
+        else:
+            raise ValueError('Unrecognized layer type: %s' % layer_type)
+        if batch_normalize:
+            layers.append(tf.keras.layers.BatchNormalization())
+        if layer_normalize:
+            layers.append(tf.keras.layers.LayerNormalization())
+        if l2_layer_normalize:
+            layers.append(L2LayerNormalization())
+        if dropout:
+            layers.append(tf.keras.layers.Dropout(dropout))
+    if use_locally_connected:
+        if project:
+            lc_units = n_units
+            lc_activation = cnn_activation
+            lc_regularizer = kernel_regularizer
+        else:
+            lc_units = n_outputs
+            lc_activation = output_activation
+            lc_regularizer = None
+        layers.append(
+            tf.keras.layers.LocallyConnected1D(
+                lc_units,
+                kernel_width,
+                padding='valid',
+                kernel_regularizer=lc_regularizer,
+                activation=lc_activation,
+                implementation=1
+            )
+        )
+        if project:
+            if batch_normalize:
+                layers.append(tf.keras.layers.BatchNormalization())
+            if layer_normalize:
+                layers.append(tf.keras.layers.LayerNormalization())
+            if l2_layer_normalize:
+                layers.append(L2LayerNormalization())
+            if dropout:
+                layers.append(tf.keras.layers.Dropout(dropout))
+    if project:
+        layers.append(
+            tf.keras.layers.Dense(n_outputs, kernel_regularizer=kernel_regularizer, activation=output_activation)
+            # tf.keras.layers.Dense(n_outputs, activation=output_activation)
+        )
+
+    outputs = inputs
+    for layer in layers:
+        outputs = layer(outputs)
+
+    return tf.keras.models.Model(inputs=inputs, outputs=outputs)
+
+
+def eval_and_save(
+        model_path,
+        eval_data_generator,
+        ylab,
+        results_path,
+        use_glove=False,
+        ix2lab=None,
+        comparison_set=None,
+        results_dict=None
+):
+    if results_dict is None:
+        results_dict = {}
+    model = tf.keras.models.load_model(model_path)
+    y_pred = dnn_classify(
+        model,
+        eval_data_generator,
+        use_glove=use_glove,
+        ix2lab=ix2lab,
+        comparison_set=comparison_set
+    )
+    T = y_pred.shape[1]
+
+    results_acc = np.zeros(T)
+    results_f1 = np.zeros(T)
+    for t in range(T):
+        acc = accuracy_score(ylab, y_pred[:, t])
+        f1 = f1_score(ylab, y_pred[:, t], average='macro')
+        results_acc[t] = acc
+        results_f1[t] = f1
+    results_dict['acc'] = results_acc
+    results_dict['f1'] = results_f1
+    with open(results_path, 'wb') as f:
+        pickle.dump(results_dict, f)
+
+
+def dnn_classify(
+        model,
+        X,
+        use_glove=False,
+        ix2lab=None,
+        argmax=True,
+        return_prob=False,
+        comparison_set=None,
+        **kwargs
+):
+    if use_glove:
         assert comparison_set is not None, 'Classification using GloVe requires a comparison set'
+    if ix2lab is None:
+        ix2lab = {}
 
     outputs = []
     for _X in X:
         _outputs = model.predict_on_batch(_X, **kwargs)
-        if model.contrastive_loss_weight:
-            _outputs, _ = _outputs
         outputs.append(_outputs)
     outputs = np.concatenate(outputs, axis=0)
 
-    if model.use_glove:
+    if use_glove:
         outputs = normalize(outputs, axis=-1)
         classes = np.array(sorted(list(comparison_set.keys())))
         glove_targ = np.stack([comparison_set[x] for x in classes], axis=1)
@@ -45,7 +226,7 @@ def dnn_classify(model, X, argmax=False, return_prob=False, comparison_set=None,
             pred = np.argmax(outputs, axis=-1)
         else:
             pred = outputs
-        pred = np.vectorize(lambda x: model.ix2lab.get(x, '<<OOV>>'))(pred)
+        pred = np.vectorize(lambda x: ix2lab.get(x, '<<OOV>>'))(pred)
 
     return pred
 
@@ -53,47 +234,50 @@ def dnn_classify(model, X, argmax=False, return_prob=False, comparison_set=None,
 class ModelEval(tf.keras.callbacks.Callback):
     def __init__(
             self,
-            save_freq=10,
-            save_path=None,
+            model_path,
+            eval_freq=10,
             eval_data_generator=None,
             ylab=None,
+            use_glove=False,
+            ix2lab=None,
             comparison_set=None,
             results_dict=None,
             results_path=None
     ):
-        self.save_freq = save_freq
-        self.save_path = save_path
+        self.model_path = model_path
+        self.eval_freq = eval_freq
         self.eval_data_generator = eval_data_generator
         self.ylab = ylab
+        self.use_glove = use_glove
+        self.ix2lab = ix2lab
         self.comparison_set = comparison_set
         self.results_dict = results_dict
         self.results_path = results_path
 
     def on_epoch_end(self, epoch, logs={}):
-        if (epoch + 1) % self.save_freq == 0:
-            if self.save_path:
-                self.model.save(self.save_path)
+        if (epoch + 1) % self.eval_freq == 0 and self.eval_data_generator is not None:
+            eval_and_save(
+                self.model_path,
+                self.eval_data_generator,
+                self.ylab,
+                self.results_path,
+                use_glove=self.use_glove,
+                ix2lab=self.ix2lab,
+                comparison_set=self.comparison_set,
+                results_dict=self.results_dict
+            )
 
-            if self.eval_data_generator is not None:
-                ylab = self.ylab
-                if self.results_dict is None:
-                    results_dict = {}
-                else:
-                    results_dict = self.results_dict
-                y_pred = self.model.classify(self.eval_data_generator, comparison_set=self.comparison_set)
-                T = y_pred.shape[1]
 
-                results_acc = np.zeros(T)
-                results_f1 = np.zeros(T)
-                for t in range(T):
-                    acc = accuracy_score(ylab, y_pred[:, t])
-                    f1 = f1_score(ylab, y_pred[:, t], average='macro')
-                    results_acc[t] = acc
-                    results_f1[t] = f1
-                results_dict['acc'] = results_acc
-                results_dict['f1'] = results_f1
-                with open(self.results_path, 'wb') as f:
-                    pickle.dump(results_dict, f)
+class ModelCheckpoint(tfa.callbacks.AverageModelCheckpoint):
+    def on_epoch_end(self, epoch, logs=None):
+        self.epochs_since_last_save += 1
+        if self.save_freq.startswith('epoch'):
+            if self.save_freq == 'epoch':
+                m = 1
+            else:
+                m = int(self.save_freq[5:])
+            if (epoch + 1) % m == 0:
+                self._save_model(epoch=epoch, batch=None, logs=logs)
 
 
 class RasterData(tf.keras.utils.Sequence):
@@ -149,12 +333,13 @@ class RasterData(tf.keras.utils.Sequence):
         self.ix = ix
 
 
+@tf.keras.utils.register_keras_serializable()
 class ResNetConv1DBlock(tf.keras.layers.Layer):
     def __init__(
             self,
             kernel_width,
             n_layers=2,
-            kernel_regularizer=None,
+            reg_scale=None,
             inner_activation=None,
             activation=None,
             layer_normalize=False,
@@ -164,11 +349,18 @@ class ResNetConv1DBlock(tf.keras.layers.Layer):
         super(ResNetConv1DBlock, self).__init__(**kwargs)
         self.kernel_width = kernel_width
         self.n_layers = n_layers
-        self.kernel_regularizer = kernel_regularizer
+        self.reg_scale = reg_scale
         self.inner_activation = inner_activation
         self.activation = activation
         self.layer_normalize = layer_normalize
         self.batch_normalize = batch_normalize
+
+        if self.reg_scale:
+            kernel_regularizer = tf.keras.regularizers.L2(self.reg_scale)
+        else:
+            kernel_regularizer = None
+        self.kernel_regularizer = kernel_regularizer
+
 
     def build(self, input_shape):
         _x = tf.keras.Input(input_shape)
@@ -209,7 +401,22 @@ class ResNetConv1DBlock(tf.keras.layers.Layer):
 
         return x
 
+    def get_config(self):
+        config = super(ResNetConv1DBlock, self).get_config()
+        config.update({
+            'kernel_width': self.kernel_width,
+            'n_layers': self.n_layers,
+            'reg_scale': self.reg_scale,
+            'inner_activation': self.inner_activation,
+            'activation': self.activation,
+            'layer_normalize': self.layer_normalize,
+            'batch_normalize': self.batch_normalize,
+        })
 
+        return config
+
+
+@tf.keras.utils.register_keras_serializable()
 class L2LayerNormalization(tf.keras.layers.Layer):
     def __init__(
             self,
@@ -248,7 +455,18 @@ class L2LayerNormalization(tf.keras.layers.Layer):
             beta = beta[None, ...]
         return inputs / norm * gamma + beta
 
+    def get_config(self):
+        config = super(L2LayerNormalization, self).get_config()
+        config.update({
+            'epsilon': self.epsilon,
+            'center': self.center,
+            'scale': self.scale,
+        })
 
+        return config
+
+
+@tf.keras.utils.register_keras_serializable()
 class SensorFilter(tf.keras.layers.Layer):
     def __init__(
             self,
@@ -284,12 +502,21 @@ class SensorFilter(tf.keras.layers.Layer):
 
         return x
 
+    def get_config(self):
+        config = super(SensorFilter, self).get_config()
+        config.update({
+            'rate': self.rate
+        })
+
+        return config
+
+
 @tf.keras.utils.register_keras_serializable()
 class DNN(tf.keras.Model):
     def __init__(
             self,
             lab_map=None,
-            learning_rate=0.0001,
+            # learning_rate=0.0001,
             layer_type='rnn',
             n_layers=1,
             n_units=16,
@@ -318,7 +545,7 @@ class DNN(tf.keras.Model):
             self.ix2lab = {self.lab2ix[y]: y for y in self.lab2ix}
         else:
             self.ix2lab = None
-        self.learning_rate = learning_rate
+        # self.learning_rate = learning_rate
         self.layer_type = layer_type.lower()
         self.n_layers = n_layers
         self.n_units = n_units
@@ -340,28 +567,28 @@ class DNN(tf.keras.Model):
         self.l2_layer_normalize = l2_layer_normalize
 
         if use_glove:
-            loss = 'mse'
-            metrics = []
-            if self.reg_scale:
-                metrics.append('mse')
-            metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
-            # loss = tf.keras.losses.CosineSimilarity(name='sim', axis=-1)
+            # loss = 'mse'
             # metrics = []
             # if self.reg_scale:
-            #     metrics.append(tf.keras.metrics.CosineSimilarity(name='sim', axis=-1))
+            #     metrics.append('mse')
+            # metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
+            # # loss = tf.keras.losses.CosineSimilarity(name='sim', axis=-1)
+            # # metrics = []
+            # # if self.reg_scale:
+            # #     metrics.append(tf.keras.metrics.CosineSimilarity(name='sim', axis=-1))
             output_activation = None
         elif continuous_outputs:
-            loss = 'mse'
-            metrics = []
-            if self.reg_scale:
-                metrics.append('mse')
+            # loss = 'mse'
+            # metrics = []
+            # if self.reg_scale:
+            #     metrics.append('mse')
             output_activation = None
         else:
-            loss = 'sparse_categorical_crossentropy'
-            metrics = []
-            if self.reg_scale:
-                metrics.append('ce')
-            metrics.append('acc')
+            # loss = 'sparse_categorical_crossentropy'
+            # metrics = []
+            # if self.reg_scale:
+            #     metrics.append('ce')
+            # metrics.append('acc')
             output_activation = 'softmax'
 
         if self.reg_scale:
@@ -382,7 +609,7 @@ class DNN(tf.keras.Model):
                     layers.append(
                         ResNetConv1DBlock(
                             kernel_width,
-                            kernel_regularizer=kernel_regularizer,
+                            reg_scale=self.reg_scale,
                             inner_activation=self.cnn_activation,
                             activation=None,
                             layer_normalize=self.layer_normalize,
@@ -461,38 +688,18 @@ class DNN(tf.keras.Model):
 
         self._layers = layers
 
-        optimizer = tf.keras.optimizers.Adam(
-            learning_rate=self.learning_rate
-        )
-
-        if self.contrastive_loss_weight:
-            loss = [loss, tfa.losses.ContrastiveLoss()]
-            metrics = [metrics, []]
-            loss_weights = [1, self.contrastive_loss_weight]
-        else:
-            loss_weights = None
-
-        self.compile(
-            optimizer=optimizer,
-            loss=loss,
-            metrics=metrics,
-            loss_weights=loss_weights
-        )
-
-        # self.classify = lambda *args, **kwargs: dnn_classify(self, *args, **kwargs)
-
     def call(self, inputs, training=False):
-        x = inputs
+        outputs = inputs
 
         for layer in self._layers:
-            x = layer(x, training=training)
+            outputs = layer(outputs)
 
         if self.contrastive_loss_weight:
-            out = (x, x)
+            out = (outputs, outputs)
         else:
-            out = x
+            out = outputs
 
-        return out
+        return super(DNN, self).__init__(inputs=inputs, outputs=outputs, training=training)
 
     def fit(self, *args, **kwargs):
         super(DNN, self).fit(*args, **kwargs)
@@ -562,8 +769,3 @@ class DNN(tf.keras.Model):
         }
 
         return config
-
-    @classmethod
-    def from_config(cls, config):
-        out = cls(**config)
-        return out

@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import FastICA, PCA
 from sklearn.pipeline import Pipeline
 import argparse
-from matplotlib import pyplot as plt
+import tensorflow_addons as tfa
 
 from .util import *
 from .classifiers import *
@@ -35,8 +35,9 @@ if __name__ == '__main__':
     argparser.add_argument('config', help='Path to config file containing decoding settings.')
     argparser.add_argument('iteration', type=int, help='Which CV iteration to run (1-indexed).')
     argparser.add_argument('fold', type=int, help='Which CV fold to run (1-indexed).')
-    argparser.add_argument('-s', '--save_freq', type=int, default=1, help='Save frequency (in epochs).')
+    argparser.add_argument('-s', '--save_freq', type=int, default=10, help='Save frequency (in epochs).')
     argparser.add_argument('-f', '--force_restart', action='store_true', help='Force model training from initialization, even if a saved model exists.')
+    argparser.add_argument('-F', '--force_resample_cv', action='store_true', help='Force resampling of CV partition, even if a saved partition exists.')
     argparser.add_argument('-c', '--cpu_only', action='store_true', help='Force CPU implementation if GPU available.')
     args = argparser.parse_args()
 
@@ -44,12 +45,16 @@ if __name__ == '__main__':
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=Loader)
     force_restart = args.force_restart
+    force_resample_cv = args.force_resample_cv
     save_freq = args.save_freq
     if args.cpu_only:
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
     paths = config['paths']
     label_field = config.get('label_field', 'attr_cat')
+    nfolds = config.get('nfolds', 5)
+    assert nfolds > 1, "nfolds must be >= 2."
+    niter = config.get('niter', 10)
     filters = config.get('filters', {})
     powerband = config.get('powerband', None)
     downsample_by = config.get('downsample_by', 1)
@@ -203,6 +208,10 @@ if __name__ == '__main__':
     stderr('Iteration %d, CV fold %d\n' % (i, j))
     fold_path = os.path.join(os.path.normpath(outdir), 'i%d' % i, 'f%d' % j)
     train_ix_path = os.path.join(fold_path, 'train_ix.obj')
+    if force_resample_cv or not os.path.exists(train_ix_path):
+        # Risky if run in parallel, since multiple diff runs could resample the entire partition at the same time
+        # Recommended to compile CV first using meg_coref.compile_cv_ix
+        compile_cv_ix(data, outdir, niter=niter, nfolds=nfolds)
     with open(train_ix_path, 'rb') as f:
         train_ix = pickle.load(f)
     val_ix_path = os.path.join(fold_path, 'val_ix.obj')
@@ -212,8 +221,9 @@ if __name__ == '__main__':
     X_train = data[train_ix]
     y_train_lab = labels[train_ix, 0]
     y_lab_uniq, y_lab_counts = np.unique(y_train_lab, return_counts=True)
-    lab_map = {_y: i for i, _y in enumerate(y_lab_uniq)}
-    y_train_lab_ix = np.vectorize(lab_map.__getitem__)(y_train_lab)
+    lab2ix = {_y: i for i, _y in enumerate(y_lab_uniq)}
+    ix2lab = {lab2ix[_y]: _y for _y in lab2ix}
+    y_train_lab_ix = np.vectorize(lab2ix.__getitem__)(y_train_lab)
     X_val = data[val_ix]
     y_val_lab = labels[val_ix, 0]
     if use_glove:
@@ -231,44 +241,32 @@ if __name__ == '__main__':
         y_val_glove = None
         comparison_set = None
         y_train = y_train_lab_ix
-        n_outputs = len(lab_map)
+        n_outputs = len(lab2ix)
         monitor = 'val_acc'
 
     validation_split = 0.1
     n_train = int(len(X_train) * (1 - validation_split))
 
-    if contrastive_loss_weight:
-        ds_train = RasterData(
-            X_train[:n_train],
-            y=y_train[:n_train],
-            batch_size=dnn_batch_size,
-            shuffle=True,
-            contrastive_sampling=True
-        )
-        ds_val = RasterData(
-            X_train[n_train:],
-            y=y_train[n_train:],
-            batch_size=dnn_batch_size,
-            shuffle=False,
-            contrastive_sampling=True
-        )
-    else:
-        ds_train = RasterData(
-            X_train[:n_train],
-            y=y_train[:n_train],
-            batch_size=dnn_batch_size,
-            shuffle=True
-        )
-        ds_val = RasterData(
-            X_train[n_train:],
-            y=y_train[n_train:],
-            batch_size=dnn_batch_size,
-            shuffle=False
-        )
+    ds_train = RasterData(
+        X_train[:n_train],
+        y=y_train[:n_train],
+        batch_size=dnn_batch_size,
+        shuffle=True,
+        contrastive_sampling=bool(contrastive_loss_weight)
+    )
+    ds_val = RasterData(
+        X_train[n_train:],
+        y=y_train[n_train:],
+        batch_size=dnn_batch_size,
+        shuffle=False,
+        contrastive_sampling=bool(contrastive_loss_weight)
+    )
 
     ds_test = RasterData(X_val, batch_size=dnn_batch_size, shuffle=False)
 
-    model_path = os.path.join(fold_path, 'm.obj')
+    model_path = os.path.join(fold_path, 'model.h5')
+    ema_path = os.path.join(fold_path, 'model_ema.h5')
+    tb_path = os.path.join(fold_path, 'tensorboard')
     results_path = os.path.join(fold_path, 'results.obj')
     results_dict = {
         'acc': None,
@@ -277,48 +275,86 @@ if __name__ == '__main__':
         'chance_f1': chance_score_f1,
     }
     callbacks = [
-        tf.keras.callbacks.EarlyStopping(monitor=monitor, patience=100, restore_best_weights=True),
-        tf.keras.callbacks.TensorBoard(os.path.join(model_path, 'tensorboard')),
+        # tf.keras.callbacks.ReduceLROnPlateau(monitor=monitor, factor=0.5, patience=10, verbose=1),
+        # tf.keras.callbacks.EarlyStopping(monitor=monitor, patience=100, restore_best_weights=False),
+        tf.keras.callbacks.ModelCheckpoint(
+            filepath=model_path
+        ),
+        tfa.callbacks.AverageModelCheckpoint(
+            update_weights=False,
+            filepath=ema_path
+        ),
+        tf.keras.callbacks.TensorBoard(tb_path),
         ModelEval(
-            save_freq=save_freq,
-            save_path=model_path,
+            model_path=ema_path,
+            eval_freq=save_freq,
             eval_data_generator=ds_test,
             ylab=y_val_lab,
+            use_glove=use_glove,
+            ix2lab=ix2lab,
             comparison_set=comparison_set,
             results_dict=results_dict,
             results_path=results_path
         )
     ]
 
-    m = DNN(
-        lab_map=lab_map,
-        layer_type=layer_type,
-        learning_rate=learning_rate,
-        n_units=n_units,
-        n_layers=n_layers,
-        kernel_width=kernel_width,
-        cnn_activation=cnn_activation,
-        n_outputs=n_outputs,
-        reg_scale=reg_scale,
-        sensor_filter_scale=sensor_filter_scale,
-        dropout=dropout,
-        input_dropout=input_dropout,
-        use_glove=use_glove,
-        use_resnet=use_resnet,
-        use_locally_connected=use_locally_connected,
-        batch_normalize=batch_normalize,
-        layer_normalize=layer_normalize,
-        l2_layer_normalize=l2_layer_normalize,
-        project=project,
-        contrastive_loss_weight=contrastive_loss_weight
-    )
-    # Call once to initialize
-    m(ds_train[0][0])
-    print(m.summary())
+    if use_glove:
+        loss = 'mse'
+        metrics = []
+        if reg_scale:
+            metrics.append('mse')
+        metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
+    else:
+        loss = 'sparse_categorical_crossentropy'
+        metrics = []
+        if reg_scale:
+            metrics.append('ce')
+        metrics.append('acc')
+
 
     if not force_restart and os.path.exists(model_path):
         stderr('Loading saved checkpoint...\n')
         m = tf.keras.models.load_model(model_path)
+    else:
+        inputs = tf.keras.Input(
+            shape=list(ds_train[0][0].shape[1:])
+        )
+
+        m = get_dnn_model(
+            inputs,
+            layer_type=layer_type,
+            n_units=n_units,
+            n_layers=n_layers,
+            kernel_width=kernel_width,
+            cnn_activation=cnn_activation,
+            n_outputs=n_outputs,
+            reg_scale=reg_scale,
+            sensor_filter_scale=sensor_filter_scale,
+            dropout=dropout,
+            input_dropout=input_dropout,
+            use_glove=use_glove,
+            use_resnet=use_resnet,
+            use_locally_connected=use_locally_connected,
+            batch_normalize=batch_normalize,
+            layer_normalize=layer_normalize,
+            l2_layer_normalize=l2_layer_normalize,
+            project=project
+        )
+
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=learning_rate
+        )
+        # optimizer = tfa.optimizers.SWA(optimizer)
+        optimizer = tfa.optimizers.MovingAverage(optimizer, average_decay=0.999)
+
+        m.compile(
+            optimizer=optimizer,
+            loss=loss,
+            metrics=metrics,
+            # loss_weights=loss_weights
+        )
+
+    m.summary()
 
     m.fit(
         ds_train,
@@ -326,4 +362,15 @@ if __name__ == '__main__':
         shuffle=False,
         callbacks=callbacks,
         validation_data=ds_val
+    )
+
+    eval_and_save(
+        ema_path,
+        ds_test,
+        y_val_lab,
+        results_path,
+        use_glove=use_glove,
+        ix2lab=ix2lab,
+        comparison_set=comparison_set,
+        results_dict=results_dict
     )
