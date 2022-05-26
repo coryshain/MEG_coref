@@ -1,31 +1,15 @@
 import os
-import math
-import shutil
 import pickle
 import re
+import numpy as np
 import yaml
 try:
     from yaml import CLoader as Loader, CDumper as Dumper
 except ImportError:
     from yaml import Loader, Dumper
-import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import FastICA, PCA
-from sklearn.pipeline import Pipeline
 import argparse
 from matplotlib import pyplot as plt
 
-from .util import *
-from .classifiers import *
-from .nn import DNN
-
-channel_matcher = re.compile('(MEG\d\d\d\d)')
-
-MAX_N_RESAMP = 100
-
-
-glove_matcher = re.compile('d\d{3}')
 iter_matcher = re.compile('i(\d+)')
 fold_matcher = re.compile('f(\d+)')
 
