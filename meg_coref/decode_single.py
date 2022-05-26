@@ -355,9 +355,18 @@ if __name__ == '__main__':
 
     m.summary()
 
+    batches_per_epoch = len(ds_train)
+    n_batch_total = n_dnn_epochs * batches_per_epoch
+    n_batch_completed = 0
+    for var in m.optimizer.variables():
+        if var.name.startswith('iter'):
+            n_batch_completed = var.numpy()
+
+    n_epochs = math.ceil((n_batch_total - n_batch_completed) / batches_per_epoch)
+
     m.fit(
         ds_train,
-        epochs=n_dnn_epochs,
+        epochs=n_epochs,
         shuffle=False,
         callbacks=callbacks,
         validation_data=ds_val
