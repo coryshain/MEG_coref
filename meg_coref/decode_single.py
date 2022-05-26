@@ -81,6 +81,7 @@ if __name__ == '__main__':
     sensor_filter_scale = config.get('sensor_filter_scale', None)
     dropout = config.get('dropout', None)
     input_dropout = config.get('input_dropout', None)
+    temporal_dropout = config.get('temporal_dropout', None)
     use_resnet = config.get('use_resnet', False)
     use_locally_connected = config.get('use_locally_connected', False)
     batch_normalize = config.get('batch_normalize', False)
@@ -311,11 +312,12 @@ if __name__ == '__main__':
             metrics.append('ce')
         metrics.append('acc')
 
-
     if not force_restart and os.path.exists(model_path):
         stderr('Loading saved checkpoint...\n')
         m = tf.keras.models.load_model(model_path)
     else:
+        if force_restart and os.path.exists(tb_path):
+            shutil.rmtree(tb_path)
         inputs = tf.keras.Input(
             shape=list(ds_train[0][0].shape[1:])
         )
@@ -332,6 +334,7 @@ if __name__ == '__main__':
             sensor_filter_scale=sensor_filter_scale,
             dropout=dropout,
             input_dropout=input_dropout,
+            temporal_dropout=temporal_dropout,
             use_glove=use_glove,
             use_resnet=use_resnet,
             use_locally_connected=use_locally_connected,

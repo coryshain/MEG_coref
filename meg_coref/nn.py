@@ -21,7 +21,8 @@ def get_dnn_model(
         cnn_activation='gelu',
         n_outputs=300,
         dropout=None,
-        input_dropout=0.5,
+        input_dropout=None,
+        temporal_dropout=None,
         reg_scale=1.,
         sensor_filter_scale=None,
         use_glove=False,
@@ -47,6 +48,8 @@ def get_dnn_model(
         layers.append(SensorFilter(rate=sensor_filter_scale))
     if input_dropout:
         layers.append(tf.keras.layers.Dropout(input_dropout))
+    if temporal_dropout:
+        layers.append(tf.keras.layers.Dropout(temporal_dropout, noise_shape=inputs.shape[:-1] + [1]))
     if use_locally_connected:
         layers.append(tf.keras.layers.ZeroPadding1D(padding=(kernel_width - 1, 0)))
     if use_resnet:
