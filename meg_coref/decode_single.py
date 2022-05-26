@@ -67,10 +67,8 @@ if __name__ == '__main__':
     tanh_transform = config.get('tanh_transform', False)
     rank_transform = config.get('rank_transform', False)
     k_feats = config.get('k_feats', 0)
-    k_pca = config.get('k_pca', 0)
     k_pca_glove = config.get('k_pca_glove', 0)
     k_pca_drop = config.get('k_pca_drop', 0)
-    k_ica = config.get('k_ica', 0)
     layer_type = config.get('layer_type', 'cnn')
     learning_rate = config.get('learning_rate', 0.0001)
     n_units = config.get('n_units', 128)
@@ -84,10 +82,11 @@ if __name__ == '__main__':
     temporal_dropout = config.get('temporal_dropout', None)
     use_resnet = config.get('use_resnet', False)
     use_locally_connected = config.get('use_locally_connected', False)
+    independent_channels = config.get('independent_channels', False)
     batch_normalize = config.get('batch_normalize', False)
     layer_normalize = config.get('layer_normalize', False)
     l2_layer_normalize = config.get('l2_layer_normalize', False)
-    project = config.get('project', True)
+    n_projection_layers = config.get('n_projection_layers', True)
     contrastive_loss_weight = config.get('contrastive_loss_weight', None)
     n_dnn_epochs = config.get('n_dnn_epochs', 1000)
     dnn_batch_size = config.get('dnn_batch_size', 32)
@@ -102,9 +101,13 @@ if __name__ == '__main__':
     if not os.path.normpath(os.path.realpath(config_path)) == os.path.normpath(os.path.realpath(outdir + '/config.ini')):
         shutil.copy2(config_path, outdir + '/config.ini')
 
-    data = []
-    labels = []
+    X_train = []
+    y_train = []
+    X_val = []
+    y_val = []
     ntime = None
+    iteration = args.iteration
+    fold = args.fold
     for dirpath in paths:
         dirpath = os.path.normpath(dirpath)
         stderr('Loading %s...\n' % dirpath)
@@ -152,84 +155,76 @@ if __name__ == '__main__':
         _data = np.transpose(_data, [0, 2, 1])
         _labels = _labels[_filter_mask]
 
-        data.append(_data)
-        labels.append(_labels)
+        train_ix_path = os.path.join(dirpath, 'train_ix_i%d_f%d.obj' % (iteration, fold))
+        if force_resample_cv or not os.path.exists(train_ix_path):
+            # Risky if run in parallel, since multiple diff runs could resample the entire partition at the same time
+            # Recommended to compile CV first using meg_coref.compile_cv_ix
+            compile_cv_ix(_data, dirpath, niter=niter, nfolds=nfolds)
+        with open(train_ix_path, 'rb') as f:
+            train_ix = pickle.load(f)
+        val_ix_path = os.path.join(dirpath, 'val_ix_i%d_f%d.obj' % (iteration, fold))
+        with open(val_ix_path, 'rb') as f:
+            val_ix = pickle.load(f)
 
-    data = np.concatenate(data, axis=0)
-    labels = np.concatenate(labels, axis=0)
+        _X_train = _data[train_ix]
+        _y_train = _labels[train_ix]
+        _X_val = _data[val_ix]
+        _y_val = _labels[val_ix]
+
+        X_train.append(_X_train)
+        y_train.append(_y_train)
+        X_val.append(_X_val)
+        y_val.append(_y_val)
+
+        if ntime is None:
+            ntime = _X_train.shape[1]
+
+    X_train = np.concatenate(X_train, axis=0)
+    y_train = np.concatenate(y_train, axis=0)
+    X_val = np.concatenate(X_val, axis=0)
+    y_val = np.concatenate(y_val, axis=0)
+
+    # Shuffle training data
+    perm = np.random.permutation(np.arange(len(X_train)))
+    X_train = X_train[perm]
+    y_train = y_train[perm]
 
     if use_glove and k_pca_glove:
         stderr('Selecting top %d principal GloVe components...\n' % k_pca_glove)
-        vocab, ix = np.unique(labels[:, 0], return_index=True)
-        _pca_in = labels[ix, 1:]
+        vocab, ix = np.unique(y_train[:, 0], return_index=True)
+        _pca_in = y_train[ix, 1:]
         glove_pca = Pipeline([('scaler', StandardScaler()), ('pca', PCA(k_pca_glove))])
         glove_pca.fit(_pca_in)
 
-    data = data
-    labels = labels
     stderr('Regressing model...\n')
-    labs, counts = np.unique(labels[:, 0], return_counts=True)
+    labs, counts = np.unique(y_train[:, 0], return_counts=True)
     _nclass = len(labs)
     _maj_class = labs[counts.argmax()]
     _maj_class_pred = np.array([_maj_class])
-    _baseline_preds = np.tile(_maj_class_pred, [len(labels)])
-    chance_score_acc = accuracy_score(labels[:, 0], _baseline_preds)
+    _baseline_preds = np.tile(_maj_class_pred, [len(y_train)])
+    chance_score_acc = accuracy_score(y_train[:, 0], _baseline_preds)
     _probs = counts / counts.sum()
-    _baseline_preds = np.random.multinomial(1, _probs, size=len(labels))
+    _baseline_preds = np.random.multinomial(1, _probs, size=len(y_train))
     _baseline_preds = _baseline_preds.argmax(axis=1)
     _baseline_preds = labs[_baseline_preds]
-    chance_score_f1 = f1_score(labels[:, 0], _baseline_preds, average='macro')
-    if k_pca or k_ica:
-        _data = data.transpose([0, 2, 1])
-        b, t = _data.shape[:2]
-        _data = _data.reshape((-1, data.shape[1]))
-        if k_pca:
-            stderr('Selecting top %d principal components...\n' % k_pca)
-            _data = zscore(_data, axis=0)
-            pca = PCA(k_pca)
-            data = pca.fit_transform(_data)
-            data = data.reshape((b, t, k_pca))
-            data = data.transpose([0, 2, 1])
-            data = data[:, k_pca_drop:, :]
-            stderr('  %.2f%% variance explained\n' % (pca.explained_variance_ratio_[k_pca_drop:].sum() * 100))
-        if k_ica:
-            stderr('Selecting %d independent components...\n' % k_ica)
-            data = FastICA(k_ica).fit_transform(_data)
-            data = data.reshape((b, t, k_ica))
-            data = data.transpose([0, 2, 1])
+    chance_score_f1 = f1_score(y_train[:, 0], _baseline_preds, average='macro')
     if use_glove and k_pca_glove:
         stderr('PCA-transforming GloVe components...\n')
-        _labels = glove_pca.transform(labels[:, 1:])
-        labels = np.concatenate([labels[:, :1], _labels], axis=1)
-    if ntime is None:
-        ntime = data.shape[-1]
+        _labels = glove_pca.transform(y_train[:, 1:])
+        labels = np.concatenate([y_train[:, :1], _labels], axis=1)
 
-    i = args.iteration
-    j = args.fold
-    stderr('Iteration %d, CV fold %d\n' % (i, j))
-    fold_path = os.path.join(os.path.normpath(outdir), 'i%d' % i, 'f%d' % j)
-    train_ix_path = os.path.join(fold_path, 'train_ix.obj')
-    if force_resample_cv or not os.path.exists(train_ix_path):
-        # Risky if run in parallel, since multiple diff runs could resample the entire partition at the same time
-        # Recommended to compile CV first using meg_coref.compile_cv_ix
-        compile_cv_ix(data, outdir, niter=niter, nfolds=nfolds)
-    with open(train_ix_path, 'rb') as f:
-        train_ix = pickle.load(f)
-    val_ix_path = os.path.join(fold_path, 'val_ix.obj')
-    with open(val_ix_path, 'rb') as f:
-        val_ix = pickle.load(f)
+    stderr('Iteration %d, CV fold %d\n' % (iteration, fold))
+    fold_path = os.path.join(os.path.normpath(outdir), 'i%d' % iteration, 'f%d' % fold)
 
-    X_train = data[train_ix]
-    y_train_lab = labels[train_ix, 0]
+    y_train_lab = y_train[:, 0]
     y_lab_uniq, y_lab_counts = np.unique(y_train_lab, return_counts=True)
     lab2ix = {_y: i for i, _y in enumerate(y_lab_uniq)}
     ix2lab = {lab2ix[_y]: _y for _y in lab2ix}
     y_train_lab_ix = np.vectorize(lab2ix.__getitem__)(y_train_lab)
-    X_val = data[val_ix]
-    y_val_lab = labels[val_ix, 0]
+    y_val_lab = y_val[:, 0]
     if use_glove:
-        y_train_glove = labels[train_ix, 1:].astype('float32')
-        y_val_glove = labels[val_ix, 1:].astype('float32')
+        y_train_glove = y_train[:, 1:].astype('float32')
+        y_val_glove = y_val[:, 1:].astype('float32')
         uniq, ix = np.unique(y_val_lab, return_index=True)
         comparison_set = {}
         for k, val in zip(ix, uniq):
@@ -338,10 +333,11 @@ if __name__ == '__main__':
             use_glove=use_glove,
             use_resnet=use_resnet,
             use_locally_connected=use_locally_connected,
+            independent_channels=independent_channels,
             batch_normalize=batch_normalize,
             layer_normalize=layer_normalize,
             l2_layer_normalize=l2_layer_normalize,
-            project=project
+            n_projection_layers=n_projection_layers
         )
 
         optimizer = tf.keras.optimizers.Adam(

@@ -16,7 +16,8 @@ def get_dnn_model(
         inputs,
         layer_type='rnn',
         n_layers=1,
-        n_units=16,
+        n_units=128,
+        n_projection_layers=1,
         kernel_width=20,
         cnn_activation='gelu',
         n_outputs=300,
@@ -28,7 +29,7 @@ def get_dnn_model(
         use_glove=False,
         use_resnet=False,
         use_locally_connected=False,
-        project=True,
+        independent_channels=False,
         batch_normalize=False,
         layer_normalize=False,
         l2_layer_normalize=False,
@@ -52,6 +53,12 @@ def get_dnn_model(
         layers.append(tf.keras.layers.Dropout(temporal_dropout, noise_shape=inputs.shape[:-1] + [1]))
     if use_locally_connected:
         layers.append(tf.keras.layers.ZeroPadding1D(padding=(kernel_width - 1, 0)))
+
+    if independent_channels:
+        groups = inputs.shape[-1]
+    else:
+        groups = 1
+
     if use_resnet:
         layers.append(
             tf.keras.layers.Conv1D(
@@ -59,7 +66,8 @@ def get_dnn_model(
                 kernel_width,
                 padding='causal',
                 kernel_regularizer=kernel_regularizer,
-                activation=cnn_activation
+                activation=cnn_activation,
+                groups=groups
             )
         )
         if batch_normalize:
@@ -90,7 +98,8 @@ def get_dnn_model(
                         kernel_width,
                         padding='causal',
                         kernel_regularizer=kernel_regularizer,
-                        activation=cnn_activation
+                        activation=cnn_activation,
+                        groups=groups
                     )
                 )
         elif layer_type == 'rnn':
@@ -112,7 +121,7 @@ def get_dnn_model(
         if dropout:
             layers.append(tf.keras.layers.Dropout(dropout))
     if use_locally_connected:
-        if project:
+        if n_projection_layers:
             lc_units = n_units
             lc_activation = cnn_activation
             lc_regularizer = kernel_regularizer
@@ -130,7 +139,7 @@ def get_dnn_model(
                 implementation=1
             )
         )
-        if project:
+        if n_projection_layers:
             if batch_normalize:
                 layers.append(tf.keras.layers.BatchNormalization())
             if layer_normalize:
@@ -139,11 +148,24 @@ def get_dnn_model(
                 layers.append(L2LayerNormalization())
             if dropout:
                 layers.append(tf.keras.layers.Dropout(dropout))
-    if project:
+    for i in range(n_projection_layers):
+        if i < n_projection_layers - 1:
+            activation = cnn_activation
+        else:
+            activation = output_activation
         layers.append(
-            tf.keras.layers.Dense(n_outputs, kernel_regularizer=kernel_regularizer, activation=output_activation)
+            tf.keras.layers.Dense(n_outputs, kernel_regularizer=kernel_regularizer, activation=activation)
             # tf.keras.layers.Dense(n_outputs, activation=output_activation)
         )
+        if i < n_projection_layers - 1:
+            if batch_normalize:
+                layers.append(tf.keras.layers.BatchNormalization())
+            if layer_normalize:
+                layers.append(tf.keras.layers.LayerNormalization())
+            if l2_layer_normalize:
+                layers.append(L2LayerNormalization())
+            if dropout:
+                layers.append(tf.keras.layers.Dropout(dropout))
 
     outputs = inputs
     for layer in layers:
@@ -519,7 +541,6 @@ class DNN(tf.keras.Model):
     def __init__(
             self,
             lab_map=None,
-            # learning_rate=0.0001,
             layer_type='rnn',
             n_layers=1,
             n_units=16,
@@ -535,7 +556,7 @@ class DNN(tf.keras.Model):
             use_resnet=False,
             use_locally_connected=False,
             contrastive_loss_weight=False,
-            project=True,
+            n_projection_layers=1,
             batch_normalize=False,
             layer_normalize=False,
             l2_layer_normalize=False,
@@ -552,6 +573,7 @@ class DNN(tf.keras.Model):
         self.layer_type = layer_type.lower()
         self.n_layers = n_layers
         self.n_units = n_units
+        self.n_projection_layers = n_projection_layers
         self.kernel_width = kernel_width
         self.cnn_activation = cnn_activation
         self.n_outputs = n_outputs
@@ -564,7 +586,6 @@ class DNN(tf.keras.Model):
         self.use_resnet = use_resnet
         self.use_locally_connected = use_locally_connected
         self.contrastive_loss_weight = contrastive_loss_weight
-        self.project = project
         self.batch_normalize = batch_normalize
         self.layer_normalize = layer_normalize
         self.l2_layer_normalize = l2_layer_normalize
@@ -656,7 +677,7 @@ class DNN(tf.keras.Model):
             else:
                 raise ValueError('Unrecognized layer type: %s' % layer_type)
         if self.use_locally_connected:
-            if self.project:
+            if self.n_projection_layers:
                 lc_units = n_units
                 lc_activation = cnn_activation
                 lc_regularizer = kernel_regularizer
@@ -674,7 +695,7 @@ class DNN(tf.keras.Model):
                     implementation=1
                 )
             )
-            if self.project:
+            if self.n_projection_layers:
                 if self.batch_normalize:
                     layers.append(tf.keras.layers.BatchNormalization())
                 if self.layer_normalize:
@@ -683,7 +704,7 @@ class DNN(tf.keras.Model):
                     layers.append(L2LayerNormalization())
                 if dropout:
                     layers.append(tf.keras.layers.Dropout(dropout))
-        if project:
+        if n_projection_layers:
             layers.append(
                 tf.keras.layers.Dense(n_outputs, kernel_regularizer=kernel_regularizer, activation=output_activation)
                 # tf.keras.layers.Dense(n_outputs, activation=output_activation)
@@ -764,7 +785,7 @@ class DNN(tf.keras.Model):
             'continuous_outputs': self.continuous_outputs,
             'use_resnet': self.use_resnet,
             'use_locally_connected': self.use_locally_connected,
-            'project': self.project,
+            'project': self.n_projection_layers,
             'contrastive_loss_weight': self.contrastive_loss_weight,
             'batch_normalize': self.batch_normalize,
             'layer_normalize': self.layer_normalize,

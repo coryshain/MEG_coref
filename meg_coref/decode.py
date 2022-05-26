@@ -333,7 +333,7 @@ if __name__ == '__main__':
                             dropout=None,
                             reg_scale=None,
                             continuous_outputs=True,
-                            project=True,
+                            n_projection_layers=True,
                             batch_normalize=True
                         )
                         X_train = np.transpose(X_train, [0, 2, 1])

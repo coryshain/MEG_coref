@@ -44,7 +44,6 @@ if __name__ == '__main__':
     if not os.path.normpath(os.path.realpath(config_path)) == os.path.normpath(os.path.realpath(outdir + '/config.ini')):
         shutil.copy2(config_path, outdir + '/config.ini')
 
-    data = []
     for dirpath in paths:
         dirpath = os.path.normpath(dirpath)
         stderr('Loading %s...\n' % dirpath)
@@ -64,8 +63,4 @@ if __name__ == '__main__':
 
         _data = _data[_filter_mask]
 
-        data.append(_data)
-
-    data = np.concatenate(data, axis=0)
-
-    compile_cv_ix(data, outdir, niter=niter, nfolds=nfolds)
+        compile_cv_ix(_data, dirpath, niter=niter, nfolds=nfolds)
