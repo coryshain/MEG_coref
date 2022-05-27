@@ -34,7 +34,6 @@ if __name__ == '__main__':
             'acc': [],
             'f1': []
         }
-        results_f1 = []
         chance = {
             'acc': None,
             'f1': None,
@@ -52,42 +51,43 @@ if __name__ == '__main__':
                 if chance['f1'] is None:
                     chance['f1'] = _results['chance_f1']
 
-        results['acc'] = np.stack(results['acc'], axis=0)
-        results['f1'] = np.stack(results['f1'], axis=0)
+        if len(results['acc']):
+            results['acc'] = np.stack(results['acc'], axis=0)
+            results['f1'] = np.stack(results['f1'], axis=0)
 
-        for score in results:
-            _results = results[score] * 100  # Place scores on 0-100 for readability
-            _chance = chance[score] * 100  # Place scores on 0-100 for readability
-            ntime = _results.shape[1]
+            for score in results:
+                _results = results[score] * 100  # Place scores on 0-100 for readability
+                _chance = chance[score] * 100  # Place scores on 0-100 for readability
+                ntime = _results.shape[1]
 
-            mean = _results.mean(axis=0)
+                mean = _results.mean(axis=0)
 
-            a = 100 - confint
+                a = 100 - confint
 
-            lb, ub = np.percentile(_results, (a / 2, 100 - (a / 2)), axis=0)
-            x = np.linspace(0 - onset, ntime / 1000 * downsample_by - onset, ntime)
+                lb, ub = np.percentile(_results, (a / 2, 100 - (a / 2)), axis=0)
+                x = np.linspace(0 - onset, ntime / 1000 * downsample_by - onset, ntime)
 
-            plt.gca().spines['top'].set_visible(False)
-            plt.gca().spines['right'].set_visible(False)
-            plt.xlim((x.min(), x.max()))
-            plt.axvline(0, color='k')
-            if score in ('acc', 'f1'):
-                plt.axhline(_chance, color='r')
-            else:
-                raise ValueError('Unrecognized scoring function: %s' % score)
-            plt.fill_between(x, lb, ub, alpha=0.2)
-            plt.plot(x, mean)
-            plt.xlabel('Time (s)')
-            if score == 'acc':
-                plt.ylabel('% Correct')
-            elif score == 'f1':
-                plt.ylabel('F1')
-            else:
-                raise ValueError('Unrecognized scoring function: %s' % score)
-            plt.tight_layout()
+                plt.gca().spines['top'].set_visible(False)
+                plt.gca().spines['right'].set_visible(False)
+                plt.xlim((x.min(), x.max()))
+                plt.axvline(0, color='k')
+                if score in ('acc', 'f1'):
+                    plt.axhline(_chance, color='r')
+                else:
+                    raise ValueError('Unrecognized scoring function: %s' % score)
+                plt.fill_between(x, lb, ub, alpha=0.2)
+                plt.plot(x, mean)
+                plt.xlabel('Time (s)')
+                if score == 'acc':
+                    plt.ylabel('% Correct')
+                elif score == 'f1':
+                    plt.ylabel('F1')
+                else:
+                    raise ValueError('Unrecognized scoring function: %s' % score)
+                plt.tight_layout()
 
-            if not os.path.exists(outdir):
-                os.makedirs(outdir)
-            plt.savefig(os.path.join(outdir, 'perf_plot_%s.png' % score))
+                if not os.path.exists(outdir):
+                    os.makedirs(outdir)
+                plt.savefig(os.path.join(outdir, 'perf_plot_%s.png' % score))
 
-            plt.close('all')
+                plt.close('all')
