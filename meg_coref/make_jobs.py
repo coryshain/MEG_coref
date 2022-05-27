@@ -78,6 +78,6 @@ if __name__ == '__main__':
                             wrapper = wrapper % ('singularity exec --nv %s bash -c "cd %s; %%s"\n' % (singularity_path, os.getcwd()))
                         else:
                             wrapper = wrapper % ('singularity exec %s bash -c "cd %s; %%s"\n' % (singularity_path, os.getcwd()))
-                    job_str = wrapper % ('python3 -m meg_coref.decode_single %s %s %s' % (path, iteration+1, fold+1))
+                    job_str = wrapper % ('python3 -m meg_coref.fit %s %s %s' % (path, iteration+1, fold+1))
                     f.write(job_str)
 

@@ -59,8 +59,6 @@ if __name__ == '__main__':
     powerband = config.get('powerband', None)
     downsample_by = config.get('downsample_by', 1)
     use_glove = config.get('use_glove', False)
-    separate_subjects = config.get('separate_subjects', True)
-    combine_subjects = config.get('combine_subjects', True)
     zscore_time = config.get('zscore_time', False)
     zscore_sensors = config.get('zscore_sensors', False)
     normalize_sensors = config.get('normalize_sensors', False)
