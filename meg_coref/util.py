@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import pickle
 import numpy as np
 
@@ -92,7 +93,7 @@ def compile_cv_ix(data, outdir, niter=1, nfolds=5, force_resample=False):
         p = np.random.permutation(p)
         p = np.array_split(p, nfolds, axis=0)
         for j in range(nfolds):
-            train_ix = np.concatenate([_p for j, _p in enumerate(p) if i != j], axis=0)
+            train_ix = np.concatenate([_p for k, _p in enumerate(p) if k != j], axis=0)
             val_ix = p[j]
 
             train_ix_filename = 'train_ix_i%d_f%d.obj' % (i + 1, j + 1)
@@ -104,3 +105,35 @@ def compile_cv_ix(data, outdir, niter=1, nfolds=5, force_resample=False):
                 val_ix_path = os.path.join(outdir, val_ix_filename)
                 with open(val_ix_path, 'wb') as f:
                     pickle.dump(val_ix, f)
+
+
+def check_cv_ix(outdir):
+    train_ix = {}
+    val_ix = {}
+    outdir = os.path.normpath(outdir)
+    train_ix_paths = [os.path.join(outdir, x) for x in os.listdir(outdir) if 'train_ix' in x]
+    val_ix_paths = [os.path.join(outdir, x) for x in os.listdir(outdir) if 'val_ix' in x]
+    for path in train_ix_paths:
+        iteration, fold = re.search('train_ix_i(\d+)_f(\d+).obj', path).groups()
+        with open(path, 'rb') as f:
+            train_ix[(iteration, fold)] = pickle.load(f)
+    for path in val_ix_paths:
+        iteration, fold = re.search('val_ix_i(\d+)_f(\d+).obj', path).groups()
+        with open(path, 'rb') as f:
+            val_ix[(iteration, fold)] = pickle.load(f)
+
+    assert len(train_ix) == len(val_ix), \
+        'Found different numbers of folds for train (%d) and validation (%d)' % (len(train_ix), len(val_ix))
+
+    for x in train_ix:
+        iteration, fold = x
+        _train_ix = train_ix[x]
+        _val_ix = val_ix[x]
+        _ix = np.sort(np.concatenate([_train_ix, _val_ix], axis=0))
+        if not np.all(np.equal(_ix, np.arange(len(_ix)))):
+            print('CV check failed. Saved indices do not reconstruct the input data.')
+            print('Iteration %s, Fold %s' % (iteration, fold))
+            print(_ix)
+            print(len(np.unique(_ix)))
+            print(np.arange(len(_ix)))
+            raise ValueError('CV check not passed.')

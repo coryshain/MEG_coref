@@ -63,4 +63,4 @@ if __name__ == '__main__':
 
         _data = _data[_filter_mask]
 
-        compile_cv_ix(_data, dirpath, niter=niter, nfolds=nfolds)
+        compile_cv_ix(_data, dirpath, niter=niter, nfolds=nfolds, force_resample=force_resample)
