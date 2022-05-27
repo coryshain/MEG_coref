@@ -1,4 +1,5 @@
 import os
+import shutil
 import argparse
 import yaml
 try:
@@ -43,7 +44,7 @@ if __name__ == '__main__':
     else:
         exclude = []
     singularity_path = args.singularity_path
-    outdir = args.outdir
+    outdir = os.path.normpath(args.outdir)
 
     if not os.path.exists(outdir):
         os.makedirs(outdir)
@@ -54,6 +55,9 @@ if __name__ == '__main__':
 
         niter = c['niter']
         nfolds = c['nfolds']
+        model_outdir = os.path.normpath(c['outdir'])
+        if not os.path.exists(model_outdir):
+            os.makedirs(model_outdir)
 
         job_name = os.path.basename(path)[:-4]
 

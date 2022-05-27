@@ -214,7 +214,7 @@ if __name__ == '__main__':
         labels = np.concatenate([y_train[:, :1], _labels], axis=1)
 
     stderr('Iteration %d, CV fold %d\n' % (iteration, fold))
-    fold_path = os.path.join(os.path.normpath(outdir), 'i%d' % iteration, 'f%d' % fold)
+    fold_path = os.path.join(os.path.normpath(outdir), 'i%d_f%d' % (iteration, fold))
 
     y_train_lab = y_train[:, 0]
     y_lab_uniq, y_lab_counts = np.unique(y_train_lab, return_counts=True)
