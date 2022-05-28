@@ -208,8 +208,8 @@ if __name__ == '__main__':
     chance_score_f1 = f1_score(y_train[:, 0], _baseline_preds, average='macro')
     if use_glove and k_pca_glove:
         stderr('PCA-transforming GloVe components...\n')
-        _labels = glove_pca.transform(y_train[:, 1:])
-        labels = np.concatenate([y_train[:, :1], _labels], axis=1)
+        y_train = np.concatenate([y_train[:, :1], glove_pca.transform(y_train[:, 1:])], axis=1)
+        y_val = np.concatenate([y_val[:, :1], glove_pca.transform(y_val[:, 1:])], axis=1)
 
     stderr('Iteration %d, CV fold %d\n' % (iteration, fold))
     fold_path = os.path.join(os.path.normpath(outdir), 'i%d_f%d' % (iteration, fold))
@@ -293,15 +293,17 @@ if __name__ == '__main__':
     ]
 
     if use_glove:
-        loss = 'mse'
+        # loss = 'mse'
+        loss = tf.keras.losses.CosineSimilarity()
         metrics = []
-        if reg_scale:
-            metrics.append('mse')
-        metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
+        if reg_scale or sensor_filter_scale:
+            # metrics.append('mse')
+            metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
+        # metrics.append()
     else:
         loss = 'sparse_categorical_crossentropy'
         metrics = []
-        if reg_scale:
+        if reg_scale or sensor_filter_scale:
             metrics.append('ce')
         metrics.append('acc')
 

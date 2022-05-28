@@ -104,7 +104,7 @@ def get_dnn_model(
                 )
         elif layer_type == 'rnn':
             layers.append(
-                tf.keras.layers.GRU(
+                tf.keras.layers.LSTM(
                     n_units,
                     kernel_regularizer=kernel_regularizer,
                     return_sequences=True
@@ -520,7 +520,6 @@ class SensorFilter(tf.keras.layers.Layer):
     def call(self, inputs, training=False):
         x = inputs
         w = self.w
-        w = tf.tanh(w)
         while len(w.shape) < len(x.shape):
             w = w[None, ...]
         x = x * w
@@ -660,7 +659,7 @@ class DNN(tf.keras.Model):
                     layers.append(tf.keras.layers.Dropout(dropout))
             elif layer_type == 'rnn':
                 layers.append(
-                    tf.keras.layers.GRU(
+                    tf.keras.layers.LSTM(
                         n_units,
                         kernel_regularizer=kernel_regularizer,
                         return_sequences=True

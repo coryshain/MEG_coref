@@ -73,6 +73,8 @@ def compute_filter_mask(y, filters):
             sel &= y[filter] == float(vals[2:].strip())
         elif vals.startswith('='):
             sel &= y[filter] == float(vals[1:].strip())
+        elif vals.startswith('!='):
+            sel &= y[filter] != vals[2:].strip()
         else:
             sel &= np.isin(y[filter], vals)
 
