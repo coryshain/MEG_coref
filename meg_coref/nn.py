@@ -520,6 +520,7 @@ class SensorFilter(tf.keras.layers.Layer):
     def call(self, inputs, training=False):
         x = inputs
         w = self.w
+        w = tf.tanh(w)
         while len(w.shape) < len(x.shape):
             w = w[None, ...]
         x = x * w
