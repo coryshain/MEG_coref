@@ -88,6 +88,7 @@ if __name__ == '__main__':
     contrastive_loss_weight = config.get('contrastive_loss_weight', None)
     n_dnn_epochs = config.get('n_dnn_epochs', 1000)
     dnn_batch_size = config.get('dnn_batch_size', 32)
+    inner_validation_split = config.get('inner_validation_split', None)
     score = config.get('score', 'acc')
     confint = config.get('confint', 95)
     onset = config.get('onset', 0.5)
@@ -182,11 +183,6 @@ if __name__ == '__main__':
     X_val = np.concatenate(X_val, axis=0)
     y_val = np.concatenate(y_val, axis=0)
 
-    # Shuffle training data
-    perm = np.random.permutation(np.arange(len(X_train)))
-    X_train = X_train[perm]
-    y_train = y_train[perm]
-
     if use_glove and k_pca_glove:
         stderr('Selecting top %d principal GloVe components...\n' % k_pca_glove)
         vocab, ix = np.unique(y_train[:, 0], return_index=True)
@@ -238,23 +234,37 @@ if __name__ == '__main__':
         n_outputs = len(lab2ix)
         monitor = 'val_acc'
 
-    validation_split = 0.1
-    n_train = int(len(X_train) * (1 - validation_split))
+    if inner_validation_split:
+        n_train = int(len(X_train) * (1 - inner_validation_split))
 
-    ds_train = RasterData(
-        X_train[:n_train],
-        y=y_train[:n_train],
-        batch_size=dnn_batch_size,
-        shuffle=True,
-        contrastive_sampling=bool(contrastive_loss_weight)
-    )
-    ds_val = RasterData(
-        X_train[n_train:],
-        y=y_train[n_train:],
-        batch_size=dnn_batch_size,
-        shuffle=False,
-        contrastive_sampling=bool(contrastive_loss_weight)
-    )
+        # Shuffle training data
+        perm = np.random.permutation(np.arange(len(X_train)))
+        X_train = X_train[perm]
+        y_train = y_train[perm]
+
+        ds_train = RasterData(
+            X_train[:n_train],
+            y=y_train[:n_train],
+            batch_size=dnn_batch_size,
+            shuffle=True,
+            contrastive_sampling=bool(contrastive_loss_weight)
+        )
+        ds_val = RasterData(
+            X_train[n_train:],
+            y=y_train[n_train:],
+            batch_size=dnn_batch_size,
+            shuffle=False,
+            contrastive_sampling=bool(contrastive_loss_weight)
+        )
+    else:
+        ds_train = RasterData(
+            X_train,
+            y=y_train,
+            batch_size=dnn_batch_size,
+            shuffle=True,
+            contrastive_sampling=bool(contrastive_loss_weight)
+        )
+        ds_val = None
 
     ds_test = RasterData(X_val, batch_size=dnn_batch_size, shuffle=False)
 
@@ -293,13 +303,12 @@ if __name__ == '__main__':
     ]
 
     if use_glove:
-        # loss = 'mse'
-        loss = tf.keras.losses.CosineSimilarity()
+        loss = 'mse'
+        # loss = tf.keras.losses.CosineSimilarity()
         metrics = []
-        if reg_scale or sensor_filter_scale:
-            # metrics.append('mse')
-            metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
-        # metrics.append()
+        # if reg_scale or sensor_filter_scale:
+        #     metrics.append('mse')
+        metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
     else:
         loss = 'sparse_categorical_crossentropy'
         metrics = []

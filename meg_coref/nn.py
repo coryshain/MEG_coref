@@ -71,9 +71,9 @@ def get_dnn_model(
             )
         )
         if batch_normalize:
-            layers.append(tf.keras.layers.BatchNormalization())
+            layers.append(tf.keras.layers.BatchNormalization(center=False, scale=False))
         if layer_normalize:
-            layers.append(tf.keras.layers.LayerNormalization())
+            layers.append(tf.keras.layers.LayerNormalization(center=False, scale=False))
         if l2_layer_normalize:
             layers.append(L2LayerNormalization())
         if dropout:
@@ -107,15 +107,16 @@ def get_dnn_model(
                 tf.keras.layers.LSTM(
                     n_units,
                     kernel_regularizer=kernel_regularizer,
+                    recurrent_regularizer=kernel_regularizer,
                     return_sequences=True
                 )
             )
         else:
             raise ValueError('Unrecognized layer type: %s' % layer_type)
         if batch_normalize:
-            layers.append(tf.keras.layers.BatchNormalization())
+            layers.append(tf.keras.layers.BatchNormalization(center=False, scale=False))
         if layer_normalize:
-            layers.append(tf.keras.layers.LayerNormalization())
+            layers.append(tf.keras.layers.LayerNormalization(center=False, scale=False))
         if l2_layer_normalize:
             layers.append(L2LayerNormalization())
         if dropout:
@@ -141,27 +142,23 @@ def get_dnn_model(
         )
         if n_projection_layers:
             if batch_normalize:
-                layers.append(tf.keras.layers.BatchNormalization())
+                layers.append(tf.keras.layers.BatchNormalization(center=False, scale=False))
             if layer_normalize:
-                layers.append(tf.keras.layers.LayerNormalization())
+                layers.append(tf.keras.layers.LayerNormalization(center=False, scale=False))
             if l2_layer_normalize:
                 layers.append(L2LayerNormalization())
             if dropout:
                 layers.append(tf.keras.layers.Dropout(dropout))
     for i in range(n_projection_layers):
-        if i < n_projection_layers - 1:
-            activation = cnn_activation
-        else:
-            activation = output_activation
         layers.append(
-            tf.keras.layers.Dense(n_outputs, kernel_regularizer=kernel_regularizer, activation=activation)
+            tf.keras.layers.Dense(n_outputs, kernel_regularizer=kernel_regularizer, activation=output_activation)
             # tf.keras.layers.Dense(n_outputs, activation=output_activation)
         )
         if i < n_projection_layers - 1:
             if batch_normalize:
-                layers.append(tf.keras.layers.BatchNormalization())
+                layers.append(tf.keras.layers.BatchNormalization(center=False, scale=False))
             if layer_normalize:
-                layers.append(tf.keras.layers.LayerNormalization())
+                layers.append(tf.keras.layers.LayerNormalization(center=False, scale=False))
             if l2_layer_normalize:
                 layers.append(L2LayerNormalization())
             if dropout:
