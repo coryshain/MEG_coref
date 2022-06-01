@@ -239,6 +239,8 @@ if __name__ == '__main__':
 
         inner_cv_ix_path = os.path.join(fold_path, 'inner_cv_ix.obj')
         if force_resample_cv or force_restart or not os.path.exists(inner_cv_ix_path):
+            if not os.path.exists(fold_path):
+                os.makedirs(fold_path)
             # Shuffle training data
             perm = np.random.permutation(np.arange(len(X_train)))
             train_inner_ix = perm[:n_train]
