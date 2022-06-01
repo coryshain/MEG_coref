@@ -237,21 +237,34 @@ if __name__ == '__main__':
     if inner_validation_split:
         n_train = int(len(X_train) * (1 - inner_validation_split))
 
-        # Shuffle training data
-        perm = np.random.permutation(np.arange(len(X_train)))
-        X_train = X_train[perm]
-        y_train = y_train[perm]
+        inner_cv_ix_path = os.path.join(fold_path, 'inner_cv_ix.obj')
+        if force_resample_cv or force_restart or not os.path.exists(inner_cv_ix_path):
+            # Shuffle training data
+            perm = np.random.permutation(np.arange(len(X_train)))
+            train_inner_ix = perm[:n_train]
+            val_inner_ix = perm[n_train:]
+            inner_cv_ix = {
+                'train': train_inner_ix,
+                'val': val_inner_ix
+            }
+            with open(inner_cv_ix_path, 'wb') as f:
+                pickle.dump(inner_cv_ix, f)
+        else:
+            with open(inner_cv_ix_path, 'rb') as f:
+                inner_cv_ix = pickle.load(f)
+            train_inner_ix = inner_cv_ix['train']
+            val_inner_ix = inner_cv_ix['val']
 
         ds_train = RasterData(
-            X_train[:n_train],
-            y=y_train[:n_train],
+            X_train[train_inner_ix],
+            y=y_train[train_inner_ix],
             batch_size=dnn_batch_size,
             shuffle=True,
             contrastive_sampling=bool(contrastive_loss_weight)
         )
         ds_val = RasterData(
-            X_train[n_train:],
-            y=y_train[n_train:],
+            X_train[val_inner_ix],
+            y=y_train[val_inner_ix],
             batch_size=dnn_batch_size,
             shuffle=False,
             contrastive_sampling=bool(contrastive_loss_weight)
@@ -365,17 +378,17 @@ if __name__ == '__main__':
     m.summary()
 
     batches_per_epoch = len(ds_train)
-    n_batch_total = n_dnn_epochs * batches_per_epoch
     n_batch_completed = 0
     for var in m.optimizer.variables():
         if var.name.startswith('iter'):
             n_batch_completed = var.numpy()
 
-    n_epochs = math.ceil((n_batch_total - n_batch_completed) / batches_per_epoch)
+    initial_epoch = math.floor(n_batch_completed / batches_per_epoch)
 
     m.fit(
         ds_train,
-        epochs=n_epochs,
+        epochs=n_dnn_epochs,
+        initial_epoch=initial_epoch,
         shuffle=False,
         callbacks=callbacks,
         validation_data=ds_val
