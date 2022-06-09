@@ -9,7 +9,7 @@ try:
 except ImportError:
     from yaml import Loader, Dumper
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
+from scipy.stats import rankdata
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import FastICA, PCA
 from sklearn.pipeline import Pipeline
@@ -17,8 +17,7 @@ import argparse
 import tensorflow_addons as tfa
 
 from .util import *
-from .classifiers import *
-from .nn import DNN
+from .nn import *
 
 channel_matcher = re.compile('(MEG\d\d\d\d)')
 
@@ -63,7 +62,7 @@ if __name__ == '__main__':
     zscore_sensors = config.get('zscore_sensors', False)
     normalize_sensors = config.get('normalize_sensors', False)
     tanh_transform = config.get('tanh_transform', False)
-    rank_transform = config.get('rank_transform', False)
+    rank_transform_sensors = config.get('rank_transform_sensors', False)
     k_feats = config.get('k_feats', 0)
     k_pca_glove = config.get('k_pca_glove', 0)
     k_pca_drop = config.get('k_pca_drop', 0)
@@ -84,8 +83,10 @@ if __name__ == '__main__':
     batch_normalize = config.get('batch_normalize', False)
     layer_normalize = config.get('layer_normalize', False)
     l2_layer_normalize = config.get('l2_layer_normalize', False)
-    n_projection_layers = config.get('n_projection_layers', True)
+    n_projection_layers = config.get('n_projection_layers', 1)
+    variational = config.get('variational', False)
     contrastive_loss_weight = config.get('contrastive_loss_weight', None)
+    index_subjects = config.get('index_subjects', False)
     n_dnn_epochs = config.get('n_dnn_epochs', 1000)
     dnn_batch_size = config.get('dnn_batch_size', 32)
     inner_validation_split = config.get('inner_validation_split', None)
@@ -107,7 +108,8 @@ if __name__ == '__main__':
     ntime = None
     iteration = args.iteration
     fold = args.fold
-    for dirpath in paths:
+    n_subject = len(paths)
+    for i, dirpath in enumerate(paths):
         dirpath = os.path.normpath(dirpath)
         stderr('Loading %s...\n' % dirpath)
         filename = 'data_d%d_p%s.obj' % (downsample_by, '%s-%s' % tuple(powerband) if powerband else 'None')
@@ -142,7 +144,7 @@ if __name__ == '__main__':
             stderr('L2 normalizing over sensors...\n')
             n = np.linalg.norm(_data, axis=1, keepdims=True)
             _data /= n
-        if rank_transform:
+        if rank_transform_sensors:
             stderr('Rank-transforming over sensors...\n')
             _ndim = _data.shape[1]
             _mean = (_ndim + 1) / 2
@@ -152,6 +154,12 @@ if __name__ == '__main__':
         _data = _data[_filter_mask]
         _data = np.where(np.isfinite(_data), _data, 0.)
         _data = np.transpose(_data, [0, 2, 1])
+
+        if index_subjects and n_subject > 1:
+            subject_ix = np.zeros(_data.shape[:-1] + (n_subject,))
+            subject_ix[..., i] = 1
+            _data = np.concatenate([_data, subject_ix], axis=-1)
+
         _labels = _labels[_filter_mask]
 
         train_ix_path = os.path.join(dirpath, 'train_ix_i%d_f%d.obj' % (iteration, fold))
@@ -183,6 +191,10 @@ if __name__ == '__main__':
     X_val = np.concatenate(X_val, axis=0)
     y_val = np.concatenate(y_val, axis=0)
 
+    if inner_validation_split:
+        n_train = int(len(X_train) * (1 - inner_validation_split))
+    else:
+        n_train = len(X_train)
     if use_glove and k_pca_glove:
         stderr('Selecting top %d principal GloVe components...\n' % k_pca_glove)
         vocab, ix = np.unique(y_train[:, 0], return_index=True)
@@ -209,6 +221,10 @@ if __name__ == '__main__':
 
     stderr('Iteration %d, CV fold %d\n' % (iteration, fold))
     fold_path = os.path.join(os.path.normpath(outdir), 'i%d_f%d' % (iteration, fold))
+    model_path = os.path.join(fold_path, 'model.h5')
+    ema_path = os.path.join(fold_path, 'model_ema.h5')
+    tb_path = os.path.join(fold_path, 'tensorboard')
+    results_path = os.path.join(fold_path, 'results.obj')
 
     y_train_lab = y_train[:, 0]
     y_lab_uniq, y_lab_counts = np.unique(y_train_lab, return_counts=True)
@@ -234,9 +250,49 @@ if __name__ == '__main__':
         n_outputs = len(lab2ix)
         monitor = 'val_acc'
 
-    if inner_validation_split:
-        n_train = int(len(X_train) * (1 - inner_validation_split))
+    if not force_restart and os.path.exists(model_path):
+        stderr('Loading saved checkpoint...\n')
+        m = tf.keras.models.load_model(model_path)
+        inputs = None
+        optimizer = None
+    else:
+        if force_restart and os.path.exists(tb_path):
+            shutil.rmtree(tb_path)
+        inputs = tf.keras.Input(
+            shape=list(X_train.shape[1:])
+        )
 
+        m = get_dnn_model(
+            inputs,
+            layer_type=layer_type,
+            n_units=n_units,
+            n_layers=n_layers,
+            kernel_width=kernel_width,
+            inner_activation=cnn_activation,
+            n_outputs=n_outputs,
+            reg_scale=reg_scale,
+            sensor_filter_scale=sensor_filter_scale,
+            dropout=dropout,
+            input_dropout=input_dropout,
+            temporal_dropout=temporal_dropout,
+            use_glove=use_glove,
+            use_resnet=use_resnet,
+            use_locally_connected=use_locally_connected,
+            independent_channels=independent_channels,
+            batch_normalize=batch_normalize,
+            layer_normalize=layer_normalize,
+            l2_layer_normalize=l2_layer_normalize,
+            n_projection_layers=n_projection_layers,
+            variational=variational,
+            n_train=n_train * X_train.shape[1]
+        )
+
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=learning_rate
+        )
+        optimizer = tfa.optimizers.MovingAverage(optimizer, average_decay=0.999)
+
+    if inner_validation_split:
         inner_cv_ix_path = os.path.join(fold_path, 'inner_cv_ix.obj')
         if force_resample_cv or force_restart or not os.path.exists(inner_cv_ix_path):
             if not os.path.exists(fold_path):
@@ -260,6 +316,7 @@ if __name__ == '__main__':
         ds_train = RasterData(
             X_train[train_inner_ix],
             y=y_train[train_inner_ix],
+            # sample_weights=m.layers[-1].get_sample_weights(),
             batch_size=dnn_batch_size,
             shuffle=True,
             contrastive_sampling=bool(contrastive_loss_weight)
@@ -283,10 +340,6 @@ if __name__ == '__main__':
 
     ds_test = RasterData(X_val, batch_size=dnn_batch_size, shuffle=False)
 
-    model_path = os.path.join(fold_path, 'model.h5')
-    ema_path = os.path.join(fold_path, 'model_ema.h5')
-    tb_path = os.path.join(fold_path, 'tensorboard')
-    results_path = os.path.join(fold_path, 'results.obj')
     results_dict = {
         'acc': None,
         'f1': None,
@@ -321,60 +374,21 @@ if __name__ == '__main__':
         loss = 'mse'
         # loss = tf.keras.losses.CosineSimilarity()
         metrics = []
-        # if reg_scale or sensor_filter_scale:
-        #     metrics.append('mse')
+        if reg_scale or sensor_filter_scale or variational:
+            metrics.append('mse')
         metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
     else:
         loss = 'sparse_categorical_crossentropy'
         metrics = []
-        if reg_scale or sensor_filter_scale:
+        if reg_scale or sensor_filter_scale or variational:
             metrics.append('ce')
         metrics.append('acc')
 
-    if not force_restart and os.path.exists(model_path):
-        stderr('Loading saved checkpoint...\n')
-        m = tf.keras.models.load_model(model_path)
-    else:
-        if force_restart and os.path.exists(tb_path):
-            shutil.rmtree(tb_path)
-        inputs = tf.keras.Input(
-            shape=list(ds_train[0][0].shape[1:])
-        )
-
-        m = get_dnn_model(
-            inputs,
-            layer_type=layer_type,
-            n_units=n_units,
-            n_layers=n_layers,
-            kernel_width=kernel_width,
-            cnn_activation=cnn_activation,
-            n_outputs=n_outputs,
-            reg_scale=reg_scale,
-            sensor_filter_scale=sensor_filter_scale,
-            dropout=dropout,
-            input_dropout=input_dropout,
-            temporal_dropout=temporal_dropout,
-            use_glove=use_glove,
-            use_resnet=use_resnet,
-            use_locally_connected=use_locally_connected,
-            independent_channels=independent_channels,
-            batch_normalize=batch_normalize,
-            layer_normalize=layer_normalize,
-            l2_layer_normalize=l2_layer_normalize,
-            n_projection_layers=n_projection_layers
-        )
-
-        optimizer = tf.keras.optimizers.Adam(
-            learning_rate=learning_rate
-        )
-        # optimizer = tfa.optimizers.SWA(optimizer)
-        optimizer = tfa.optimizers.MovingAverage(optimizer, average_decay=0.999)
-
+    if force_restart or not os.path.exists(model_path):
         m.compile(
             optimizer=optimizer,
             loss=loss,
-            metrics=metrics,
-            # loss_weights=loss_weights
+            metrics=metrics
         )
 
     m.summary()
