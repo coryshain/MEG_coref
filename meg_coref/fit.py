@@ -309,6 +309,9 @@ if __name__ == '__main__':
         )
         optimizer = tfa.optimizers.MovingAverage(optimizer, average_decay=0.999)
 
+    if not os.path.exists(fold_path):
+        os.makedirs(fold_path)
+
     metadata = {
         'ix2lab': ix2lab,
         'subject_map': subject_map,
@@ -320,8 +323,6 @@ if __name__ == '__main__':
     if inner_validation_split:
         inner_cv_ix_path = os.path.join(fold_path, 'inner_cv_ix.obj')
         if force_resample_cv or force_restart or not os.path.exists(inner_cv_ix_path):
-            if not os.path.exists(fold_path):
-                os.makedirs(fold_path)
             # Shuffle training data
             perm = np.random.permutation(np.arange(len(X_train)))
             train_inner_ix = perm[:n_train]
