@@ -79,6 +79,8 @@ if __name__ == '__main__':
     temporal_dropout = config.get('temporal_dropout', None)
     use_resnet = config.get('use_resnet', False)
     use_locally_connected = config.get('use_locally_connected', False)
+    use_time_mask = config.get('use_time_mask', False)
+    time_mask_regularizer_scale = config.get('time_mask_regularizer_scale', None)
     independent_channels = config.get('independent_channels', False)
     batch_normalize = config.get('batch_normalize', False)
     layer_normalize = config.get('layer_normalize', False)
@@ -109,6 +111,7 @@ if __name__ == '__main__':
     iteration = args.iteration
     fold = args.fold
     n_subject = len(paths)
+    subject_map = {}
     for i, dirpath in enumerate(paths):
         dirpath = os.path.normpath(dirpath)
         stderr('Loading %s...\n' % dirpath)
@@ -120,12 +123,15 @@ if __name__ == '__main__':
         _labels = data_src['labels']
         meta = data_src['meta']
 
+        cols = [label_field]
+        if use_glove:
+            cols += sorted([x for x in _labels if glove_matcher.match(x)])
+
         _label_df = pd.DataFrame(_labels)
         if 'labcount' not in _label_df.columns:
             labs, ix, counts = np.unique(_label_df[label_field].values, return_inverse=True, return_counts=True)
             counts = counts[ix]
             _label_df['labcount'] = counts
-        _filter_mask = compute_filter_mask(_label_df, filters)
         cols = [label_field]
         if use_glove:
             cols += sorted([x for x in _labels if glove_matcher.match(x)])
@@ -151,16 +157,14 @@ if __name__ == '__main__':
             _sd = np.arange(_ndim).std()
             _data = (rankdata(_data, axis=1) - 1) / _sd
 
-        _data = _data[_filter_mask]
         _data = np.where(np.isfinite(_data), _data, 0.)
         _data = np.transpose(_data, [0, 2, 1])
 
-        if index_subjects and n_subject > 1:
+        if index_subjects:
             subject_ix = np.zeros(_data.shape[:-1] + (n_subject,))
             subject_ix[..., i] = 1
             _data = np.concatenate([_data, subject_ix], axis=-1)
-
-        _labels = _labels[_filter_mask]
+            subject_map[dirpath] = i
 
         train_ix_path = os.path.join(dirpath, 'train_ix_i%d_f%d.obj' % (iteration, fold))
         if force_resample_cv or not os.path.exists(train_ix_path):
@@ -177,6 +181,14 @@ if __name__ == '__main__':
         _y_train = _labels[train_ix]
         _X_val = _data[val_ix]
         _y_val = _labels[val_ix]
+
+        _filter_mask = compute_filter_mask(_label_df.iloc[train_ix], filters)
+        _X_train = _X_train[_filter_mask]
+        _y_train = _y_train[_filter_mask]
+
+        _filter_mask = compute_filter_mask(_label_df.iloc[val_ix], filters)
+        _X_val = _X_val[_filter_mask]
+        _y_val = _y_val[_filter_mask]
 
         X_train.append(_X_train)
         y_train.append(_y_train)
@@ -201,6 +213,8 @@ if __name__ == '__main__':
         _pca_in = y_train[ix, 1:]
         glove_pca = Pipeline([('scaler', StandardScaler()), ('pca', PCA(k_pca_glove))])
         glove_pca.fit(_pca_in)
+    else:
+        glove_pca = None
 
     stderr('Regressing model...\n')
     labs, counts = np.unique(y_train[:, 0], return_counts=True)
@@ -225,6 +239,7 @@ if __name__ == '__main__':
     ema_path = os.path.join(fold_path, 'model_ema.h5')
     tb_path = os.path.join(fold_path, 'tensorboard')
     results_path = os.path.join(fold_path, 'results.obj')
+    metadata_path = os.path.join(fold_path, 'metadata.obj')
 
     y_train_lab = y_train[:, 0]
     y_lab_uniq, y_lab_counts = np.unique(y_train_lab, return_counts=True)
@@ -278,6 +293,8 @@ if __name__ == '__main__':
             use_glove=use_glove,
             use_resnet=use_resnet,
             use_locally_connected=use_locally_connected,
+            use_time_mask=use_time_mask,
+            time_mask_regularizer_scale=time_mask_regularizer_scale,
             independent_channels=independent_channels,
             batch_normalize=batch_normalize,
             layer_normalize=layer_normalize,
@@ -291,6 +308,14 @@ if __name__ == '__main__':
             learning_rate=learning_rate
         )
         optimizer = tfa.optimizers.MovingAverage(optimizer, average_decay=0.999)
+
+    metadata = {
+        'ix2lab': ix2lab,
+        'subject_map': subject_map,
+        'glove_pca': glove_pca
+    }
+    with open(metadata_path, 'wb') as f:
+        pickle.dump(metadata, f)
 
     if inner_validation_split:
         inner_cv_ix_path = os.path.join(fold_path, 'inner_cv_ix.obj')
@@ -374,13 +399,13 @@ if __name__ == '__main__':
         loss = 'mse'
         # loss = tf.keras.losses.CosineSimilarity()
         metrics = []
-        if reg_scale or sensor_filter_scale or variational:
+        if reg_scale or sensor_filter_scale or use_time_mask or variational:
             metrics.append('mse')
         metrics.append(tf.keras.metrics.CosineSimilarity(name='sim'))
     else:
         loss = 'sparse_categorical_crossentropy'
         metrics = []
-        if reg_scale or sensor_filter_scale or variational:
+        if reg_scale or sensor_filter_scale or use_time_mask or variational:
             metrics.append('ce')
         metrics.append('acc')
 

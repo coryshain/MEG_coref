@@ -31,6 +31,8 @@ def get_dnn_model(
         use_glove=False,
         use_resnet=False,
         use_locally_connected=False,
+        use_time_mask=False,
+        time_mask_regularizer_scale=None,
         independent_channels=False,
         batch_normalize=False,
         layer_normalize=False,
@@ -205,6 +207,9 @@ def get_dnn_model(
             if dropout:
                 layers.append(tf.keras.layers.Dropout(dropout, noise_shape=noise_shape))
 
+    if use_time_mask:
+        layers.append(TrainableTimeMask(rate=time_mask_regularizer_scale))
+
     outputs = inputs
     for layer in layers:
         outputs = layer(outputs)
@@ -252,8 +257,6 @@ def dnn_classify(
         X,
         use_glove=False,
         ix2lab=None,
-        argmax=True,
-        return_prob=False,
         comparison_set=None,
         **kwargs
 ):
@@ -276,20 +279,16 @@ def dnn_classify(
         glove_targ = normalize(glove_targ, axis=0)
 
         outputs = np.dot(outputs, glove_targ)
-        if argmax:
-            ix = np.argmax(outputs, axis=-1)
-            pred = classes[ix]
-        else:
-            pred = outputs
-        if return_prob:
-            probs = np.max(outputs, axis=-1)
-        else:
-            prob = None
+        ix = np.argmax(outputs, axis=-1)
+        pred = classes[ix]
     else:
-        if argmax:
-            pred = np.argmax(outputs, axis=-1)
-        else:
-            pred = outputs
+        if comparison_set:
+            mask = np.zeros(outputs.shape[-1])
+            mask[comparison_set] = 1
+            while len(mask.shape) < len(outputs.shape):
+                mask = mask[None, ...]
+            outputs *= mask
+        pred = np.argmax(outputs, axis=-1)
         pred = np.vectorize(lambda x: ix2lab.get(x, '<<OOV>>'))(pred)
 
     return pred
@@ -664,32 +663,30 @@ class TrainableTimeMask(tf.keras.layers.Layer):
         super(TrainableTimeMask, self).__init__(**kwargs)
 
         self.rate = rate
-        if self.rate:
-            self.w_regularizer = tf.keras.regularizers.L1(self.rate)
-        else:
-            self.w_regularizer = None
 
     def build(self, input_shape):
         ndim = int(input_shape[-2])
-        shape = [ndim, 1]
-        while len(shape) < len(input_shape):
-            shape = [1] + shape
-
+        regularizer = tf.keras.regularizers.L2(self.rate / ndim)
         self.w = self.add_weight(
             name='time_mask',
-            shape=shape,
+            shape=(ndim,),
             initializer='zeros',
-            regularizer=self.w_regularizer
+            regularizer=regularizer
         )
 
+        self.built = True
+
     def call(self, inputs, training=False):
+        # tf.print('w', tf.squeeze(self.w), 'attn', tf.nn.softmax(self.w), summarize=20)
         return inputs
 
-    def get_sample_weights(self):
-        return tf.nn.softplus(self.w, axis=-2)
-
     def compute_mask(self, inputs, mask=None):
-        return tf.nn.softmax(self.w, axis=-2)
+        input_shape = inputs.shape
+        attn = tf.nn.softmax(self.w)[..., None] # Time must be 2nd to last dim
+        while len(attn.shape) < len(input_shape):
+            attn = attn[None, ...]
+        ntime = tf.cast(tf.shape(self.w)[0], dtype=tf.float32)
+        return attn * ntime
 
     def get_config(self):
         config = super(TrainableTimeMask, self).get_config()

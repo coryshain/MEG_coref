@@ -61,7 +61,9 @@ def compute_filter_mask(y, filters):
         break
     for filter in filters:
         vals = filters[filter]
-        if vals.startswith('<='):
+        if isinstance(vals, list):
+            sel &= np.isin(y[filter], vals)
+        elif vals.startswith('<='):
             sel &= y[filter] <= float(vals[2:].strip())
         elif vals.startswith('<'):
             sel &= y[filter] < float(vals[1:].strip())
@@ -76,7 +78,7 @@ def compute_filter_mask(y, filters):
         elif vals.startswith('!='):
             sel &= y[filter] != vals[2:].strip()
         else:
-            sel &= np.isin(y[filter], vals)
+            raise ValueError('Unrecognized filter: %s' % filter)
 
     return sel
 

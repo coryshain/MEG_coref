@@ -18,9 +18,11 @@ if __name__ == '__main__':
     Run cross-validated decoding.
     ''')
     argparser.add_argument('config_paths', nargs='+', help='Path(s) to config file(s) containing decoding settings.')
+    argparser.add_argument('-e', '--eval', default='', help='Which evaluation to plot. Defaults to plotting the cross-validated main objective.')
     args = argparser.parse_args()
 
     config_paths = args.config_paths
+    eval = args.eval
     for config_path in config_paths:
         with open(config_path, 'r') as f:
             config = yaml.load(f, Loader=Loader)
@@ -35,25 +37,29 @@ if __name__ == '__main__':
             'f1': []
         }
         chance = {
-            'acc': None,
-            'f1': None,
+            'acc': [],
+            'f1': [],
         }
         for i, j in [fold_matcher.match(x).groups() for x in os.listdir(outdir) if fold_matcher.match(x)]:
             folddir = os.path.join(outdir, 'i%s_f%s' % (i, j))
-            respath = os.path.join(folddir, 'results.obj')
+            if eval:
+                filename = 'results_eval%s.obj' % eval
+            else:
+                filename = 'results.obj'
+            respath = os.path.join(folddir, filename)
             if os.path.exists(respath):
                 with open(respath, 'rb') as f:
                     _results = pickle.load(f)
                 results['acc'].append(_results['acc'])
                 results['f1'].append(_results['f1'])
-                if chance['acc'] is None:
-                    chance['acc'] = _results['chance_acc']
-                if chance['f1'] is None:
-                    chance['f1'] = _results['chance_f1']
+                chance['acc'].append(_results['chance_acc'])
+                chance['f1'].append(_results['chance_f1'])
 
         if len(results['acc']):
             results['acc'] = np.stack(results['acc'], axis=0)
             results['f1'] = np.stack(results['f1'], axis=0)
+            chance['acc'] = np.mean(chance['acc'])
+            chance['f1'] = np.mean(chance['f1'])
 
             for score in results:
                 _results = results[score] * 100  # Place scores on 0-100 for readability
@@ -88,6 +94,10 @@ if __name__ == '__main__':
 
                 if not os.path.exists(outdir):
                     os.makedirs(outdir)
-                plt.savefig(os.path.join(outdir, 'perf_plot_%s.png' % score))
+                if eval:
+                    eval_str = '_eval%s' % eval
+                else:
+                    eval_str = ''
+                plt.savefig(os.path.join(outdir, 'perf_plot%s_%s.png' % (eval_str, score)))
 
                 plt.close('all')

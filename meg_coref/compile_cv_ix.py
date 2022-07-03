@@ -26,8 +26,6 @@ if __name__ == '__main__':
     force_resample = args.force_resample
 
     paths = config['paths']
-    label_field = config.get('label_field', 'attr_cat')
-    filters = config.get('filters', {})
     powerband = config.get('powerband', None)
     downsample_by = config.get('downsample_by', 1)
     nfolds = config.get('nfolds', 5)
@@ -52,15 +50,5 @@ if __name__ == '__main__':
         with open(cache_path, 'rb') as f:
             data_src = pickle.load(f)
         _data = data_src['data']
-        _labels = data_src['labels']
-
-        _label_df = pd.DataFrame(_labels)
-        if 'count' not in _label_df.columns:
-            labs, ix, counts = np.unique(_label_df[label_field].values, return_inverse=True, return_counts=True)
-            counts = counts[ix]
-            _label_df['labcount'] = counts
-        _filter_mask = compute_filter_mask(_label_df, filters)
-
-        _data = _data[_filter_mask]
 
         compile_cv_ix(_data, dirpath, niter=niter, nfolds=nfolds, force_resample=force_resample)
