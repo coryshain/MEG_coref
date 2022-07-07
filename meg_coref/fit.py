@@ -240,6 +240,7 @@ if __name__ == '__main__':
     tb_path = os.path.join(fold_path, 'tensorboard')
     results_path = os.path.join(fold_path, 'results.obj')
     metadata_path = os.path.join(fold_path, 'metadata.obj')
+    summary_path = os.path.join(fold_path, 'summary.txt')
 
     y_train_lab = y_train[:, 0]
     y_lab_uniq, y_lab_counts = np.unique(y_train_lab, return_counts=True)
@@ -446,3 +447,9 @@ if __name__ == '__main__':
         comparison_set=comparison_set,
         results_dict=results_dict
     )
+
+    def print_fn(x):
+        with open(summary_path, 'a') as f:
+            f.write(x + '\n')
+
+    m.summary(print_fn=print_fn)

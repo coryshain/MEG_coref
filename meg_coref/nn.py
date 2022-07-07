@@ -666,7 +666,10 @@ class TrainableTimeMask(tf.keras.layers.Layer):
 
     def build(self, input_shape):
         ndim = int(input_shape[-2])
-        regularizer = tf.keras.regularizers.L2(self.rate / ndim)
+        if self.rate:
+            regularizer = tf.keras.regularizers.L2(self.rate / ndim)
+        else:
+            regularizer = None
         self.w = self.add_weight(
             name='time_mask',
             shape=(ndim,),
