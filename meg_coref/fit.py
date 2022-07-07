@@ -101,7 +101,7 @@ if __name__ == '__main__':
         os.makedirs(outdir)
 
     if not os.path.normpath(os.path.realpath(config_path)) == os.path.normpath(os.path.realpath(outdir + '/config.ini')):
-        shutil.copy2(config_path, outdir + '/config.ini')
+        shutil.copy2(config_path, outdir + '/config.yml')
 
     X_train = []
     y_train = []

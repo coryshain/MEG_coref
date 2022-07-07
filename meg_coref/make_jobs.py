@@ -20,7 +20,7 @@ base = """#!/bin/bash
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser('''
-    Generate SLURM batch jobs to run CDR models specified in one or more config files.
+    Generate SLURM batch jobs to run decoder models specified in one or more config files.
     ''')
     argparser.add_argument('paths', nargs='+', help='Path(s) to CDR config file(s).')
     argparser.add_argument('-t', '--time', type=int, default=48, help='Maximum number of hours to train models')
@@ -59,11 +59,10 @@ if __name__ == '__main__':
         if not os.path.exists(model_outdir):
             os.makedirs(model_outdir)
 
-        job_name = os.path.basename(path)[:-4]
-
         for iteration in range(niter):
             for fold in range(nfolds):
-                filename = os.path.join(outdir, job_name + '_i%d_f%d.pbs' % (iteration+1, fold+1))
+                job_name = os.path.basename(path)[:-4] + '_i%d_f%d' % (iteration+1, fold+1)
+                filename = os.path.join(outdir, job_name + '.pbs')
                 with open(filename, 'w') as f:
                     f.write(base % (job_name, job_name, time, memory, n_cores))
                     if use_gpu:
