@@ -23,6 +23,7 @@ if __name__ == '__main__':
     Generate SLURM batch jobs to run decoder models specified in one or more config files.
     ''')
     argparser.add_argument('paths', nargs='+', help='Path(s) to CDR config file(s).')
+    argparser.add_argument('-j', '--jobtype', default='fit', help='Type of job, one of "fit", "eval".')
     argparser.add_argument('-t', '--time', type=int, default=48, help='Maximum number of hours to train models')
     argparser.add_argument('-n', '--n_cores', type=int, default=4, help='Number of cores to request')
     argparser.add_argument('-g', '--use_gpu', action='store_true', help='Whether to request a GPU node')
@@ -34,6 +35,7 @@ if __name__ == '__main__':
     args = argparser.parse_args()
 
     paths = args.paths
+    jobtype = args.jobtype
     time = args.time
     n_cores = args.n_cores
     use_gpu = args.use_gpu
@@ -77,6 +79,7 @@ if __name__ == '__main__':
                             wrapper = wrapper % ('singularity exec --nv %s bash -c "cd %s; %%s"\n' % (singularity_path, os.getcwd()))
                         else:
                             wrapper = wrapper % ('singularity exec %s bash -c "cd %s; %%s"\n' % (singularity_path, os.getcwd()))
-                    job_str = wrapper % ('python3 -m meg_coref.fit %s %s %s' % (path, iteration+1, fold+1))
+
+                    job_str = wrapper % ('python3 -m meg_coref.%s %s %s %s' % (jobtype, path, iteration+1, fold+1))
                     f.write(job_str)
 
